@@ -1,0 +1,71 @@
+---
+name: {{ skill_name }}
+description: "{{ skill_description }}"
+keywords: {{ keywords | default([]) }}
+---
+
+# {{ skill_name }}
+
+## Purpose
+
+{{ purpose }}
+
+## Capabilities
+
+{% for capability in capabilities %}
+{{ loop.index }}. **{{ capability.name }}**: {{ capability.description }}
+{% endfor %}
+
+## ReAct Workflow
+
+{% for phase in phases %}
+### Phase {{ loop.index }}: {{ phase.name }}
+
+#### Think {{ loop.index }}: {{ phase.think }}
+
+{{ phase.thought_content }}
+
+#### Act {{ loop.index }}: {{ phase.act }}
+
+```yaml
+Action: {{ phase.action_name }}
+Input:
+{% for key, value in phase.action_input.items() %}
+  {{ key }}: {{ value }}
+{% endfor %}
+```
+
+#### Observe {{ loop.index }}: {{ phase.observe }}
+
+{{ phase.observation_content }}
+
+{% endfor %}
+
+## ReAct Guardrails
+
+- Default to one action per step.
+- Use `actions` only for short read-only batches such as `read_file_chunk`, `extract_structure`, `grep_search`, or `extract_lookup_values`.
+- Keep batched `actions` independent and low-risk, because later actions cannot see outputs from earlier actions in the same batch.
+- Never batch `write_file`, `patch_file`, `run_command`, `clone_repository`, `query_database`, or `query_knowledge_base`.
+- Set `done=true` as soon as the evidence is sufficient for final generation; do not wait for ReAct to write final artifacts.
+
+## Runtime Artifact Handling
+
+- Read upstream artifacts provided by the runtime instead of hardcoding canonical upstream file lists in this SKILL.
+- Generate only the runtime-configured expected outputs for this expert.
+- Keep exact output filenames, upstream dependencies, routing keywords, ownership metadata, and delivery checklist in the expert YAML rather than duplicating them here.
+- If you include a path example for explanation, mark it as illustrative instead of authoritative.
+
+## Tools Used
+
+This expert uses the following tools:
+{% for tool in tools %}
+- {{ tool }}
+{% endfor %}
+
+## Notes
+
+- This expert follows the standard ReAct workflow pattern
+- ReAct defaults to single-step execution, with only short read-only evidence batches allowed
+- All outputs are validated for completeness
+- Templates are used to ensure consistent structure

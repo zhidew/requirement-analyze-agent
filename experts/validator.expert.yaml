@@ -1,0 +1,102 @@
+name: IR Validation Expert
+name_en: IR Validation Expert
+name_zh: IR验证专家
+capability: validator
+description: 校验 IR 交付包的完整性、一致性、可追踪性、可验收性和待确认问题闭环。
+version: 0.1.0
+skills:
+  - validator
+keywords:
+  - 验证
+  - 校验
+  - 一致性
+  - 完整性
+  - 可追踪
+  - 验收
+inputs:
+  required:
+    - raw_requirements
+    - existing_assets
+    - output_root
+  optional:
+    - competitor_reference
+    - constraints
+    - context
+scheduling:
+  priority: 10
+  dependencies:
+    - ir-assembler
+upstream_artifacts:
+  ir-assembler:
+    - it-requirements.md
+    - requirement-traceability.json
+    - acceptance-criteria.md
+    - open-questions.md
+tools:
+  allowed:
+    - list_files
+    - read_file_chunk
+    - grep_search
+    - validate_artifacts
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - validation-report.md
+  evidence:
+    - validator.json
+metadata:
+  boundary_contract:
+    owns:
+      - IR completeness, consistency, traceability, acceptance readiness validation
+    excludes:
+      - rewriting the IR package
+      - creating new requirements
+      - technical implementation design
+    upstream_inputs:
+      - ir-assembler
+  topic_ownership:
+    topics:
+      - consistency_checks
+      - gap_analysis
+      - traceability_checks
+      - acceptance_readiness
+      - residual_risks
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 校验
+      - 验证
+      - 完整性
+      - 一致性
+      - 可追踪
+      - 验收
+  prompt_hints:
+    file_guidance:
+      validation-report.md: 输出阻塞问题、警告、通过项、追踪缺口、验收风险和建议修复动作。
+    default_file_guidance: 聚焦验证和风险，不重写 IR 内容。
+  delivery_contract:
+    must_answer:
+      - IR 是否完整覆盖 RR、竞品参考和专家产物中的关键需求。
+      - IR 条款是否存在冲突、重复、不可验收或不可追踪问题。
+      - 哪些问题会阻塞进入 IT 设计。
+    evidence_expectations:
+      - 每个问题都要给出文件、条款或证据来源。
+      - 修复建议必须具体，不应只是泛泛提醒。
+    artifact_review_checklist:
+      validation-report.md:
+        - 需要按阻塞、警告、通过项和建议动作分类。
+        - 每条问题都要说明影响和证据。
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+  planner_selection:
+    llm_selectable: false
+    default_selected: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

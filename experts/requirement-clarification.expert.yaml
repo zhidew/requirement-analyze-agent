@@ -1,0 +1,113 @@
+name: Requirement Clarification Expert
+name_en: Requirement Clarification Expert
+name_zh: 需求澄清专家
+capability: requirement-clarification
+description: 面向 BA 梳理 RR 中的业务目标、范围、角色、术语、假设、疑问和待确认事项，形成可供后续专家使用的澄清基线。
+version: 0.1.0
+skills:
+  - requirement-clarification
+keywords:
+  - 需求澄清
+  - RR
+  - Raw Requirements
+  - 业务目标
+  - 范围
+  - 术语
+  - 假设
+inputs:
+  required:
+    - raw_requirements
+    - output_root
+  optional:
+    - competitor_reference
+    - constraints
+    - context
+scheduling:
+  priority: 95
+  dependencies: []
+upstream_artifacts: {}
+tools:
+  allowed:
+    - list_files
+    - read_file_chunk
+    - grep_search
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - requirement-clarification.md
+    - scope-and-assumptions.md
+    - glossary.md
+  evidence:
+    - requirement-clarification.json
+metadata:
+  boundary_contract:
+    owns:
+      - RR clarification baseline, scope, assumptions, glossary, open questions
+    excludes:
+      - detailed business rules
+      - workflow decomposition
+      - integration contract design
+    upstream_inputs: []
+  topic_ownership:
+    topics:
+      - shared_context
+      - business_goal
+      - scope_boundary
+      - stakeholders
+      - glossary
+      - assumptions
+      - open_questions
+    owns_shared_context: true
+    shared_context_topics:
+      - business_background
+      - raw_requirement_overview
+      - competitor_reference_summary
+      - scope
+      - target_outcomes
+    generic_shared_context_section_examples: 业务背景 / RR概述 / 竞品参考摘要 / 范围说明 / 目标结果
+  routing:
+    keywords:
+      - 澄清
+      - 范围
+      - 目标
+      - 术语
+      - 假设
+      - 待确认
+      - ambiguous
+      - clarification
+  prompt_hints:
+    file_guidance:
+      requirement-clarification.md: 提炼 RR 的业务目标、角色、场景、输入材料事实、待确认问题和澄清结论，标注证据来源与置信度。
+      scope-and-assumptions.md: 明确本次 IR 覆盖范围、排除范围、关键假设、约束、风险和后续确认点。
+      glossary.md: 输出业务术语表，包含术语、定义、别名、来源、歧义和推荐统一命名。
+    default_file_guidance: 只建立需求理解基线，不展开规则、单据、流程或集成细节。
+  delivery_contract:
+    must_answer:
+      - RR 的业务目标、用户角色、范围边界和待确认问题是否清楚。
+      - 竞品参考中的可借鉴能力、差异点和不适用点是否被标出。
+      - 后续专家可以依赖哪些术语、假设和范围约束。
+    evidence_expectations:
+      - 每个澄清结论应能回指 RR、上传材料、竞品参考或人工回答。
+      - 无法确认的信息必须进入待确认项，不得写成事实。
+    artifact_review_checklist:
+      requirement-clarification.md:
+        - 需要覆盖目标、角色、场景、事实依据、歧义和待确认事项。
+        - 不得把推测写成已确认需求。
+      scope-and-assumptions.md:
+        - 覆盖范围、排除范围、约束、假设和风险必须清晰。
+      glossary.md:
+        - 术语定义、来源和歧义处理需要稳定可复用。
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+  planner_selection:
+    llm_selectable: true
+    default_selected: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

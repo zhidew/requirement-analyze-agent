@@ -1,0 +1,114 @@
+name: IR Assembly Expert
+name_en: IR Assembly Expert
+name_zh: IR聚合专家
+capability: ir-assembler
+description: 聚合需求澄清、规则、单据、流程和集成专家产物，形成面向 IT/SE 的 IR（IT Requirements）交付包。
+version: 0.1.0
+skills:
+  - ir-assembler
+keywords:
+  - IR
+  - IT Requirements
+  - 需求规格
+  - 需求聚合
+  - 追踪矩阵
+inputs:
+  required:
+    - raw_requirements
+    - existing_assets
+    - output_root
+  optional:
+    - competitor_reference
+    - constraints
+    - context
+scheduling:
+  priority: 20
+  dependencies: []
+upstream_artifacts: {}
+tools:
+  allowed:
+    - list_files
+    - read_file_chunk
+    - grep_search
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - it-requirements.md
+    - requirement-traceability.json
+    - acceptance-criteria.md
+    - open-questions.md
+  evidence:
+    - ir-assembler.json
+metadata:
+  boundary_contract:
+    owns:
+      - IR synthesis, cross-expert consistency, traceability, acceptance criteria, open questions
+    excludes:
+      - invention of unsupported requirements
+      - detailed technical design
+      - implementation task breakdown
+    upstream_inputs: []
+  topic_ownership:
+    topics:
+      - shared_context
+      - cross_requirement_alignment
+      - traceability
+      - final_ir_package
+      - acceptance_criteria
+      - open_questions
+    owns_shared_context: true
+    shared_context_topics:
+      - business_background
+      - raw_requirement_overview
+      - competitor_reference_summary
+      - scope
+      - target_outcomes
+    generic_shared_context_section_examples: 业务背景 / RR概述 / 竞品参考摘要 / 范围说明 / 目标结果
+  routing:
+    keywords:
+      - IR
+      - IT需求
+      - 需求规格
+      - 聚合
+      - 汇总
+      - 追踪
+      - 验收标准
+  prompt_hints:
+    file_guidance:
+      it-requirements.md: 聚合上游专家产物形成 IR 主文档，覆盖目标、范围、角色、规则、单据、流程、集成、非功能约束、假设和待确认项。
+      requirement-traceability.json: 建立 RR 条目、竞品参考、专家产物、IR 条款和验收标准之间的追踪关系。
+      acceptance-criteria.md: 输出可验收的业务验收标准，覆盖正常、异常、权限、边界和集成场景。
+      open-questions.md: 汇总所有仍需 BA/业务方/IT 确认的问题，按阻塞程度、责任方和影响范围分类。
+    default_file_guidance: 聚焦综合、对齐和追踪，不替代上游专家生成新的规则、单据、流程或集成细节。
+  delivery_contract:
+    must_answer:
+      - 最终 IR 是否能让 SE 开始 IT 设计，并能追踪到 RR 或专家产物。
+      - 上游产物之间的冲突、缺口和残余假设是否被标出。
+      - 验收标准和待确认问题是否结构化且可执行。
+    evidence_expectations:
+      - 每个 IR 条款需要引用 RR、竞品参考、人工澄清或上游专家产物。
+      - 缺失、冲突或低置信度内容必须保留为待确认项。
+    artifact_review_checklist:
+      it-requirements.md:
+        - 覆盖业务目标、范围、规则、单据、流程、集成、约束和待确认事项。
+        - 不得新增未被上游事实支撑的需求。
+      requirement-traceability.json:
+        - 追踪关系字段稳定且标注覆盖状态。
+      acceptance-criteria.md:
+        - 验收标准必须具体、可验证、可关联需求。
+      open-questions.md:
+        - 待确认问题必须有责任方、影响和建议处理优先级。
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+  planner_selection:
+    llm_selectable: false
+    default_selected: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

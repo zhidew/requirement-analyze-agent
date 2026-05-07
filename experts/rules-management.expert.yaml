@@ -1,0 +1,109 @@
+name: Rules Management Expert
+name_en: Rules Management Expert
+name_zh: 规则管理专家
+capability: rules-management
+description: 识别和结构化业务规则、判定条件、计算口径、参数、优先级、例外和可配置性要求。
+version: 0.1.0
+skills:
+  - rules-management
+keywords:
+  - 业务规则
+  - 规则管理
+  - 计算口径
+  - 判定条件
+  - 参数
+  - 例外
+inputs:
+  required:
+    - raw_requirements
+    - existing_assets
+    - output_root
+  optional:
+    - competitor_reference
+    - constraints
+    - context
+scheduling:
+  priority: 85
+  dependencies:
+    - requirement-clarification
+upstream_artifacts:
+  requirement-clarification:
+    - requirement-clarification.md
+    - scope-and-assumptions.md
+    - glossary.md
+tools:
+  allowed:
+    - list_files
+    - read_file_chunk
+    - grep_search
+    - extract_lookup_values
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - business-rules.md
+    - decision-tables.md
+    - rule-parameters.yaml
+  evidence:
+    - rules-management.json
+metadata:
+  boundary_contract:
+    owns:
+      - business rules, decision tables, calculation logic, rule parameters
+    excludes:
+      - page or document layout
+      - end-to-end workflow orchestration
+      - external integration contracts
+    upstream_inputs:
+      - requirement-clarification
+  topic_ownership:
+    topics:
+      - business_rules
+      - decision_conditions
+      - calculations
+      - rule_priority
+      - exceptions
+      - configurable_parameters
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 规则
+      - 条件
+      - 口径
+      - 公式
+      - 计算
+      - 阈值
+      - 参数
+      - 决策表
+      - 例外
+  prompt_hints:
+    file_guidance:
+      business-rules.md: 按规则编号输出触发条件、判断逻辑、结果、例外、优先级、来源和待确认点。
+      decision-tables.md: 将复杂判断转为决策表，覆盖条件组合、输出动作和冲突处理。
+      rule-parameters.yaml: 结构化输出可配置参数、默认值、取值范围、生效范围和变更影响。
+    default_file_guidance: 聚焦规则和口径，不重写流程、单据或集成要求。
+  delivery_contract:
+    must_answer:
+      - 核心业务规则、计算口径和例外是否可被实现和验收。
+      - 多规则冲突、优先级和默认处理是否明确。
+      - 哪些规则应参数化或配置化。
+    evidence_expectations:
+      - 规则编号必须能追踪到 RR、澄清产物或竞品参考。
+      - 推断规则必须标注假设和待确认状态。
+    artifact_review_checklist:
+      business-rules.md:
+        - 规则描述必须包含触发条件、逻辑、输出、例外和来源。
+      decision-tables.md:
+        - 条件组合不得遗漏关键路径，冲突处理必须明确。
+      rule-parameters.yaml:
+        - 参数字段要稳定且可机器读取。
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

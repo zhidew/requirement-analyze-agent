@@ -1,0 +1,120 @@
+name: Integration Requirements Expert
+name_en: Integration Requirements Expert
+name_zh: 集成需求专家
+capability: integration-requirements
+description: 从 BA 视角识别上下游系统、业务事件、数据交换、触发时机、对账、失败处理和接口需求边界。
+version: 0.1.0
+skills:
+  - integration-requirements
+keywords:
+  - 集成
+  - 上下游
+  - 接口需求
+  - 数据交换
+  - 业务事件
+  - 对账
+inputs:
+  required:
+    - raw_requirements
+    - existing_assets
+    - output_root
+  optional:
+    - competitor_reference
+    - constraints
+    - context
+scheduling:
+  priority: 70
+  dependencies:
+    - requirement-clarification
+    - process-control
+upstream_artifacts:
+  requirement-clarification:
+    - requirement-clarification.md
+    - scope-and-assumptions.md
+    - glossary.md
+  process-control:
+    - process-requirements.md
+    - state-transition.md
+    - exception-handling.md
+  document-operation:
+    - field-requirements.yaml
+tools:
+  allowed:
+    - list_files
+    - read_file_chunk
+    - grep_search
+    - query_knowledge_base
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - integration-requirements.md
+    - external-system-matrix.yaml
+    - data-exchange-events.md
+  evidence:
+    - integration-requirements.json
+metadata:
+  boundary_contract:
+    owns:
+      - upstream/downstream systems, integration scenarios, data exchange needs, failure and reconciliation requirements
+    excludes:
+      - OpenAPI or AsyncAPI technical contract details
+      - database schema design
+      - middleware implementation
+    upstream_inputs:
+      - requirement-clarification
+      - process-control
+      - document-operation
+  topic_ownership:
+    topics:
+      - external_systems
+      - integration_scenarios
+      - data_exchange
+      - business_events
+      - reconciliation
+      - failure_handling
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 集成
+      - 上游
+      - 下游
+      - 接口
+      - 同步
+      - 异步
+      - 推送
+      - 拉取
+      - 对账
+      - 回调
+      - 外部系统
+  prompt_hints:
+    file_guidance:
+      integration-requirements.md: 输出集成场景、系统边界、触发时机、业务目的、成功/失败处理和待确认接口需求。
+      external-system-matrix.yaml: 结构化上下游系统清单，包含系统、角色、交互方向、数据对象、时效、责任边界和确认状态。
+      data-exchange-events.md: 梳理业务事件、数据交换内容、触发条件、消费方、对账和补偿要求。
+    default_file_guidance: 保持 BA 需求视角，不生成技术 API/消息协议。
+  delivery_contract:
+    must_answer:
+      - 需要哪些上下游系统参与，以及各自业务责任是什么。
+      - 数据交换的触发、时效、失败处理和对账要求是否明确。
+      - 哪些内容仍需后续 IT 接口设计确认。
+    evidence_expectations:
+      - 集成场景必须引用流程、单据字段或 RR 来源。
+      - 技术协议未知时只描述需求边界，不臆造 API 细节。
+    artifact_review_checklist:
+      integration-requirements.md:
+        - 集成场景、系统边界、异常处理和待确认项必须完整。
+      external-system-matrix.yaml:
+        - 系统矩阵字段必须稳定且可机器读取。
+      data-exchange-events.md:
+        - 业务事件和数据交换要求必须能追踪到流程或单据。
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

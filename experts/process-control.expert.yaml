@@ -1,0 +1,121 @@
+name: Process Control Expert
+name_en: Process Control Expert
+name_zh: 流程控制专家
+capability: process-control
+description: 分析端到端业务流程、节点、角色、状态流转、分支、异常、补偿和时限控制要求。
+version: 0.1.0
+skills:
+  - process-control
+keywords:
+  - 流程
+  - 审批
+  - 状态流转
+  - 分支
+  - 异常
+  - SLA
+  - 补偿
+inputs:
+  required:
+    - raw_requirements
+    - existing_assets
+    - output_root
+  optional:
+    - competitor_reference
+    - constraints
+    - context
+scheduling:
+  priority: 75
+  dependencies:
+    - requirement-clarification
+    - rules-management
+    - document-operation
+upstream_artifacts:
+  requirement-clarification:
+    - requirement-clarification.md
+    - scope-and-assumptions.md
+    - glossary.md
+  rules-management:
+    - business-rules.md
+    - decision-tables.md
+  document-operation:
+    - document-operations.md
+    - field-requirements.yaml
+    - operation-permissions.md
+tools:
+  allowed:
+    - list_files
+    - read_file_chunk
+    - grep_search
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - process-requirements.md
+    - state-transition.md
+    - exception-handling.md
+  evidence:
+    - process-control.json
+metadata:
+  boundary_contract:
+    owns:
+      - process flows, state transitions, branch conditions, exception handling, SLA/business timing
+    excludes:
+      - field-level form design
+      - integration message payloads
+      - technical workflow engine implementation
+    upstream_inputs:
+      - requirement-clarification
+      - rules-management
+      - document-operation
+  topic_ownership:
+    topics:
+      - process_flows
+      - workflow_nodes
+      - state_transitions
+      - branch_conditions
+      - exception_paths
+      - business_timing
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 流程
+      - 审批
+      - 流转
+      - 节点
+      - 状态
+      - 分支
+      - 退回
+      - 撤回
+      - 超时
+      - 补偿
+  prompt_hints:
+    file_guidance:
+      process-requirements.md: 描述主流程、角色、节点、输入输出、前置后置、分支规则和竞品差异。
+      state-transition.md: 输出状态机、允许动作、状态迁移条件、禁止迁移和状态含义。
+      exception-handling.md: 覆盖异常路径、撤回/退回/作废/超时/补偿/人工介入要求。
+    default_file_guidance: 聚焦业务流程控制，不落入技术实现或接口细节。
+  delivery_contract:
+    must_answer:
+      - 主流程、分支、状态流转和异常路径是否完整。
+      - 每个流程节点的角色、触发条件和输出是否明确。
+      - 流程约束是否与规则和单据作业一致。
+    evidence_expectations:
+      - 流程节点和分支条件应引用 RR、规则或单据产物。
+      - 无法确定的流程分支必须标为待确认。
+    artifact_review_checklist:
+      process-requirements.md:
+        - 主流程和关键分支必须可顺序执行。
+      state-transition.md:
+        - 状态迁移必须避免互相矛盾。
+      exception-handling.md:
+        - 异常路径需要给出处理动作和责任角色。
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

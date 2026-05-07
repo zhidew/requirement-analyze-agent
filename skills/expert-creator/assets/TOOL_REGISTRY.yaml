@@ -1,0 +1,380 @@
+# Tool Registry
+# 系统内置工具注册表，由 expert-creator 管理
+
+version: "1.0.0"
+description: "系统内置工具注册中心"
+
+tools:
+  # ==================== 文件操作工具 ====================
+  - name: write_file
+    category: file_operations
+    description_zh: "创建或覆盖写入文件"
+    description_en: "Create or overwrite a file"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+        description: "项目根目录"
+      file_path:
+        type: string
+        required: true
+        description: "相对文件路径"
+      content:
+        type: string
+        required: true
+        description: "文件内容"
+    output_schema:
+      status:
+        type: string
+        description: "操作状态"
+      path:
+        type: string
+        description: "写入的文件路径"
+    use_cases:
+      - "生成设计文档"
+      - "创建配置文件"
+      - "输出专家产物"
+    recommended_for:
+      - "所有需要生成文件的专家"
+      
+  - name: patch_file
+    category: file_operations
+    description_zh: "使用diff算法修补文件"
+    description_en: "Patch a file using diff algorithm"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      file_path:
+        type: string
+        required: true
+      patches:
+        type: array
+        required: true
+        description: "补丁列表"
+    output_schema:
+      status:
+        type: string
+      patched_lines:
+        type: integer
+    use_cases:
+      - "增量更新现有文档"
+      - "修复已生成文件"
+    recommended_for:
+      - "需要增量更新的专家"
+      
+  - name: read_file_chunk
+    category: file_operations
+    description_zh: "读取文件指定行范围"
+    description_en: "Read specific line range of a file"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      file_path:
+        type: string
+        required: true
+      start_line:
+        type: integer
+        required: false
+      end_line:
+        type: integer
+        required: false
+    output_schema:
+      content:
+        type: string
+      total_lines:
+        type: integer
+    use_cases:
+      - "读取参考文档"
+      - "查看现有设计"
+    recommended_for:
+      - "需要参考现有内容的专家"
+
+  - name: list_files
+    category: file_operations
+    description_zh: "列出目录下的文件"
+    description_en: "List files in a directory"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      directory:
+        type: string
+        required: false
+      pattern:
+        type: string
+        required: false
+    output_schema:
+      files:
+        type: array
+      directories:
+        type: array
+    use_cases:
+      - "探索项目结构"
+      - "查找相关文件"
+    recommended_for:
+      - "所有专家"
+
+  - name: grep_search
+    category: file_operations
+    description_zh: "正则搜索文件内容"
+    description_en: "Search file content with regex"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      pattern:
+        type: string
+        required: true
+      file_pattern:
+        type: string
+        required: false
+    output_schema:
+      matches:
+        type: array
+      count:
+        type: integer
+    use_cases:
+      - "查找特定代码模式"
+      - "搜索关键词"
+    recommended_for:
+      - "代码分析类专家"
+
+  # ==================== 数据库工具 ====================
+  - name: query_database
+    category: database
+    description_zh: "查询数据库元数据或执行只读SQL"
+    description_en: "Query database metadata or execute read-only SQL"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      db_id:
+        type: string
+        required: true
+        description: "数据库配置ID"
+      query_type:
+        type: string
+        required: true
+        enum: [list_tables, describe_table, list_indexes, list_constraints, execute_query]
+      schema:
+        type: string
+        required: false
+      table_name:
+        type: string
+        required: false
+      sql:
+        type: string
+        required: false
+      limit:
+        type: integer
+        required: false
+    output_schema:
+      result:
+        type: array
+      query_type:
+        type: string
+    use_cases:
+      - "分析数据库结构"
+      - "生成数据模型"
+      - "设计API字段"
+    recommended_for:
+      - "data-design"
+      - "api-design"
+      - "ddd-structure"
+
+  # ==================== 知识库工具 ====================
+  - name: query_knowledge_base
+    category: knowledge
+    description_zh: "搜索本地知识库"
+    description_en: "Search local knowledge bases"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      kb_id:
+        type: string
+        required: false
+      query_type:
+        type: string
+        required: true
+        enum: [search_terms, get_feature_tree, search_design_docs, get_related_designs]
+      keyword:
+        type: string
+        required: false
+      feature_id:
+        type: string
+        required: false
+    output_schema:
+      terms:
+        type: array
+      features:
+        type: object
+      designs:
+        type: array
+    use_cases:
+      - "查询业务术语"
+      - "获取功能树"
+      - "查找相关设计文档"
+    recommended_for:
+      - "所有设计专家"
+
+  # ==================== 代码仓库工具 ====================
+  - name: clone_repository
+    category: repository
+    description_zh: "克隆或更新Git仓库"
+    description_en: "Clone or update a Git repository"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      repo_id:
+        type: string
+        required: true
+      repo_url:
+        type: string
+        required: false
+      branch:
+        type: string
+        required: false
+      depth:
+        type: integer
+        required: false
+    output_schema:
+      status:
+        type: string
+      path:
+        type: string
+    use_cases:
+      - "分析现有代码"
+      - "参考已有实现"
+    recommended_for:
+      - "modular-design"
+      - "api-design"
+      - "integration-design"
+
+  # ==================== 结构分析工具 ====================
+  - name: extract_structure
+    category: analysis
+    description_zh: "提取代码结构"
+    description_en: "Extract code structure"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      path:
+        type: string
+        required: true
+      language:
+        type: string
+        required: false
+    output_schema:
+      structure:
+        type: object
+    use_cases:
+      - "分析代码架构"
+      - "理解模块结构"
+    recommended_for:
+      - "modular-design"
+      - "ddd-structure"
+
+  - name: extract_lookup_values
+    category: analysis
+    description_zh: "提取查找值(枚举、字典等)"
+    description_en: "Extract lookup values (enums, dictionaries)"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      path:
+        type: string
+        required: true
+    output_schema:
+      values:
+        type: array
+    use_cases:
+      - "提取枚举定义"
+      - "分析字典数据"
+    recommended_for:
+      - "data-design"
+      - "config-design"
+
+  # ==================== 命令执行工具 ====================
+  - name: run_command
+    category: execution
+    description_zh: "执行shell命令"
+    description_en: "Execute shell command"
+    input_schema:
+      root_dir:
+        type: string
+        required: true
+      command:
+        type: string
+        required: true
+      timeout:
+        type: integer
+        required: false
+    output_schema:
+      stdout:
+        type: string
+      stderr:
+        type: string
+      exit_code:
+        type: integer
+    use_cases:
+      - "运行脚本"
+      - "执行测试"
+    recommended_for:
+      - "ops-design"
+      - "test-design"
+
+# 工具分类
+categories:
+  - id: file_operations
+    name_zh: "文件操作"
+    name_en: "File Operations"
+    description: "文件读写、搜索等基础操作"
+    
+  - id: database
+    name_zh: "数据库"
+    name_en: "Database"
+    description: "数据库结构查询和分析"
+    
+  - id: knowledge
+    name_zh: "知识库"
+    name_en: "Knowledge Base"
+    description: "业务术语、功能树、设计文档查询"
+    
+  - id: repository
+    name_zh: "代码仓库"
+    name_en: "Repository"
+    description: "Git仓库克隆和更新"
+    
+  - id: analysis
+    name_zh: "结构分析"
+    name_en: "Structure Analysis"
+    description: "代码结构提取和分析"
+    
+  - id: execution
+    name_zh: "命令执行"
+    name_en: "Command Execution"
+    description: "Shell命令执行"
+
+# 工具组合推荐
+tool_combinations:
+  - name: "设计文档生成"
+    tools: [query_knowledge_base, read_file_chunk, write_file]
+    description: "查询知识库 -> 参考现有文档 -> 生成新文档"
+    
+  - name: "数据模型设计"
+    tools: [query_database, query_knowledge_base, write_file]
+    description: "查询数据库结构 -> 理解业务术语 -> 设计数据模型"
+    
+  - name: "API设计"
+    tools: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
+    description: "分析现有代码 -> 查询数据结构 -> 理解业务 -> 设计API -> 更新文档"
+    
+  - name: "架构分析"
+    tools: [clone_repository, extract_structure, grep_search, write_file]
+    description: "克隆代码 -> 提取结构 -> 搜索关键模式 -> 生成架构文档"

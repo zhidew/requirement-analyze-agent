@@ -1,0 +1,70 @@
+phases:
+  - id: INIT
+    label_zh: 初始化
+    label_en: Init
+    executable: false
+    order: 0
+    experts: []
+
+  - id: PLANNING
+    label_zh: 分析规划
+    label_en: Analysis Planning
+    executable: true
+    order: 1
+    experts: []
+
+  - id: ANALYSIS
+    label_zh: 需求澄清
+    label_en: Requirement Clarification
+    executable: true
+    order: 2
+    experts:
+      - requirement-clarification
+
+  - id: RULES
+    label_zh: 规则分析
+    label_en: Rules Analysis
+    executable: true
+    order: 3
+    experts:
+      - rules-management
+
+  - id: OPERATIONS
+    label_zh: 单据作业
+    label_en: Document Operations
+    executable: true
+    order: 4
+    experts:
+      - document-operation
+
+  - id: PROCESS
+    label_zh: 流程控制
+    label_en: Process Control
+    executable: true
+    order: 5
+    experts:
+      - process-control
+
+  - id: INTEGRATION
+    label_zh: 集成需求
+    label_en: Integration Requirements
+    executable: true
+    order: 6
+    experts:
+      - integration-requirements
+
+  - id: DELIVERY
+    label_zh: IR交付
+    label_en: IR Delivery
+    executable: true
+    order: 7
+    experts:
+      - ir-assembler
+      - validator
+
+  - id: DONE
+    label_zh: 已完成
+    label_en: Done
+    executable: false
+    order: 99
+    experts: []

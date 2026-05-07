@@ -1,0 +1,38 @@
+# Consolidated dependencies for runtime, local development, and optional
+# database inspection support. This is the single dependency entrypoint.
+
+# Core framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.12.5
+
+# Orchestrator runtime
+langgraph==0.2.68
+langgraph-checkpoint==2.0.12
+langgraph-sdk==0.1.48
+
+# OpenAI-compatible LLM access
+openai==1.63.0
+
+# Config and security
+cryptography==44.0.0
+python-dotenv==1.0.1
+pyyaml==6.0.2
+
+# API transport
+sse-starlette==2.2.1
+python-multipart==0.0.20
+
+# Database inspection support
+SQLAlchemy==2.0.38
+psycopg[binary]==3.3.3  # No system libraries required
+
+# Development and test tools
+black==25.1.0
+pylint==3.3.4
+pytest==8.3.5
+pytest-asyncio==0.25.3
+
+# Optional drivers for future expansion
+# pymysql==1.1.1
+# cx-Oracle==8.3.0

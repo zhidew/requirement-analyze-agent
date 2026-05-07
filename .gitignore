@@ -1,0 +1,55 @@
+﻿# Dependencies
+node_modules/
+.worktrees/
+venv/
+.venv/
+env/
+.env
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+.tox/
+.nox/
+api_server/tests/*
+**/tests/
+test_*.py
+*_test.py
+
+# Project Specific Artifacts (Output)
+projects/
+examples/
+api_server/run_logs/
+skills/**/.versions/
+agents/.versions/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build Artifacts
+dist/
+build/
+*.exe
+*.dll
+*.so
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+npmcache
+.agents
+.expert-center-versions/*
