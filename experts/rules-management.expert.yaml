@@ -2,8 +2,8 @@ name: Rules Management Expert
 name_en: Rules Management Expert
 name_zh: 规则管理专家
 capability: rules-management
-description: 识别和结构化业务规则、判定条件、计算口径、参数、优先级、例外和可配置性要求。
-version: 0.1.0
+description: 作为需求分析师和规则领域专家，基于 RR、需求澄清产物、竞品材料以及代码仓库、数据库、知识库三类证据，使用 ReAct 思路识别、验证和结构化业务规则、判定条件、计算口径、参数、优先级、例外和可配置性要求。
+version: 0.2.0
 skills:
   - rules-management
 keywords:
@@ -13,6 +13,10 @@ keywords:
   - 判定条件
   - 参数
   - 例外
+  - ReAct
+  - 代码仓库
+  - 数据库
+  - 知识库
 inputs:
   required:
     - raw_requirements
@@ -22,6 +26,12 @@ inputs:
     - competitor_reference
     - constraints
     - context
+    - database_schema
+    - code_repository
+    - knowledge_base
+    - existing_documents
+    - historical_requirements
+    - current_system_behavior
 scheduling:
   priority: 85
   dependencies:
@@ -53,10 +63,14 @@ metadata:
   boundary_contract:
     owns:
       - business rules, decision tables, calculation logic, rule parameters
+      - rule evidence chain across RR, clarification artifacts, code repository, database, knowledge base and competitor references
+      - rule uncertainty handling, including confirmed rules, assumptions, pending clarifications and downstream risk notes
     excludes:
       - page or document layout
       - end-to-end workflow orchestration
       - external integration contracts
+      - database table design or migration implementation
+      - technical code implementation details
     upstream_inputs:
       - requirement-clarification
   topic_ownership:
@@ -67,6 +81,9 @@ metadata:
       - rule_priority
       - exceptions
       - configurable_parameters
+      - rule_evidence
+      - rule_uncertainty
+      - current_system_rule_clues
     owns_shared_context: false
   routing:
     keywords:
@@ -79,29 +96,60 @@ metadata:
       - 参数
       - 决策表
       - 例外
+      - 枚举
+      - 配置
+      - 字典
+      - ReAct
   prompt_hints:
     file_guidance:
-      business-rules.md: 按规则编号输出触发条件、判断逻辑、结果、例外、优先级、来源、澄清状态、推进假设和待确认点。
-      decision-tables.md: 将复杂判断转为决策表，覆盖条件组合、输出动作和冲突处理。
-      rule-parameters.yaml: 结构化输出可配置参数、默认值、取值范围、生效范围和变更影响。
-    default_file_guidance: 聚焦规则和口径，不重写流程、单据或集成要求。
+      business-rules.md: 按规则编号输出触发条件、判断逻辑、结果、例外、优先级、来源、三库证据、澄清状态、推进假设、待确认点和下游使用建议。
+      decision-tables.md: 将复杂判断转为决策表，覆盖条件组合、输出动作、默认处理、冲突处理、证据来源和未覆盖条件。
+      rule-parameters.yaml: 结构化输出可配置参数、默认值、取值范围、生效范围、证据来源、确认状态和变更影响。
+    default_file_guidance: 聚焦规则和口径，不重写流程、单据、接口、数据库 DDL 或技术实现；来自代码仓库、数据库、知识库的内容只能作为现有系统线索或候选解释，不能直接升级为新需求事实。
   delivery_contract:
     must_answer:
       - 核心业务规则、计算口径和例外是否可被实现和验收。
       - 多规则冲突、优先级和默认处理是否明确。
       - 哪些规则应参数化或配置化。
+      - 每条规则的来源是否可追溯到 RR、澄清产物、竞品材料、代码仓库、数据库或知识库。
+      - 三库中发现的现有规则线索、枚举、阈值、状态和配置是否被识别，并标明其与新需求的关系。
+      - 哪些规则仍待确认、哪些可按假设推进、哪些会阻塞下游流程/单据/集成分析。
+      - ReAct 分析过程中每个关键规则判断是否经过观察证据、推理归纳、行动补证和结论校验。
     evidence_expectations:
       - 规则编号必须能追踪到 RR、澄清产物或竞品参考。
       - 必须读取 ambiguity-map.md、decision-records.md 和 requirement-maturity-assessment.md；已澄清项可作为规则依据，待确认项不得写成确定规则，按假设推进项必须标注假设来源。
-      - 推断规则必须标注假设和待确认状态。
+      - 必须结合代码仓库、数据库和知识库进行证据交叉验证：代码用于发现现有判断逻辑，数据库用于发现状态/枚举/阈值/数据约束，知识库用于发现政策、口径、历史规则或领域解释。
+      - 如果项目没有配置某一类证据源，或配置了但未检索到相关证据，必须明确标注“未配置 / 已检查未发现 / 不适用”，不得补写虚构来源。
+      - 从三库推断出的规则必须标注为“现有系统线索”“候选解释”或“待确认”，不得直接写成已确认业务规则。
+      - 推断规则必须标注假设、适用边界、证据强度和待确认状态。
     artifact_review_checklist:
       business-rules.md:
         - 规则描述必须包含触发条件、逻辑、输出、例外和来源。
         - 每条规则必须标明确认状态；待确认或按假设推进的规则不能与已确认规则混写。
+        - 每条规则必须包含 ReAct 证据摘要和三库证据使用情况；无三库证据时必须说明未发现或未适用。
       decision-tables.md:
         - 条件组合不得遗漏关键路径，冲突处理必须明确。
+        - 决策表必须标明默认处理、未覆盖条件和冲突消解依据。
+        - 决策表必须标明三库证据覆盖情况与 ReAct 校验摘要；无证据时必须说明未配置、已检查未发现或不适用。
       rule-parameters.yaml:
         - 参数字段要稳定且可机器读取。
+        - 每个参数必须包含来源、确认状态、生效范围、变更影响和是否需要配置化。
+        - 每个参数必须包含三库证据覆盖情况；从三库推导的参数只能标为现有系统线索、候选解释或待确认，不能直接标为已确认新需求。
+    react_policy:
+      required: true
+      loop:
+        - thought: 识别候选规则、候选条件、候选参数和不确定点。
+        - action: 检索 RR、澄清产物、代码仓库、数据库和知识库，收集证据。
+        - observation: 记录证据来源、证据强度、冲突点和缺口。
+        - reasoning: 归纳规则语义，区分已确认事实、现有系统线索、候选解释和待确认项。
+        - validation: 回查 ambiguity-map.md、decision-records.md、requirement-maturity-assessment.md 和三库证据，确认没有把推断写成事实。
+      stop_conditions:
+        - confirmed_rules_have_sources
+        - pending_rules_are_marked_and_routed_to_clarification
+        - assumed_rules_have_boundaries_and_downstream_risks
+        - decision_tables_cover_key_condition_combinations
+        - rule_parameters_are_machine_readable
+        - three_repository_evidence_has_been_checked_or_declared_not_applicable
 policies:
   asset_baseline_required: true
   evidence_required: true

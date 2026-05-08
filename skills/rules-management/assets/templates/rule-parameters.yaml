@@ -1,0 +1,43 @@
+parameters:
+  - id: PARAM-001
+    name: ""
+    description: ""
+    related_rules: []
+    value_type: ""
+    default_value: null
+    allowed_values: []
+    value_range:
+      min: null
+      max: null
+      unit: ""
+    effective_scope: ""
+    effective_condition: ""
+    configurable: true
+    configuration_reason: ""
+    source:
+      rr: []
+      clarification_artifacts: []
+      code_repository: []
+      database: []
+      knowledge_base: []
+      competitor_reference: []
+    evidence_review:
+      code_repository:
+        status: "未配置"
+        findings: []
+      database:
+        status: "未配置"
+        findings: []
+      knowledge_base:
+        status: "未配置"
+        findings: []
+    react_validation:
+      candidate_reason: ""
+      retrieval_summary: ""
+      observation_summary: ""
+      conclusion_type: "待确认"
+      validation_result: ""
+    confirmation_status: "待确认"
+    assumption_or_open_question: ""
+    change_impact: ""
+    downstream_notes: ""
