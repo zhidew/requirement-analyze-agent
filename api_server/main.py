@@ -149,4 +149,4 @@ async def get_job_status_stream(request: Request, job_id: str):
 if __name__ == "__main__":
     import uvicorn
     # Make sure this is run from the design-system/api_server directory or set pythonpath
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=9090, reload=True)

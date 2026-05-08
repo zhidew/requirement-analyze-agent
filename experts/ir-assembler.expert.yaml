@@ -50,6 +50,7 @@ upstream_artifacts:
     - process-requirements.md
     - state-transition.md
     - exception-handling.md
+    - workflow-configuration.yaml
   integration-requirements:
     - integration-requirements.md
     - external-system-matrix.yaml

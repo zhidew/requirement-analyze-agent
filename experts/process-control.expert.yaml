@@ -2,8 +2,8 @@ name: Process Control Expert
 name_en: Process Control Expert
 name_zh: 流程控制专家
 capability: process-control
-description: 分析端到端业务流程、节点、角色、状态流转、分支、异常、补偿和时限控制要求。
-version: 0.1.0
+description: 面向 BA 和流程控制专家，基于 RR、澄清结论、规则、表单作业、竞品材料以及已配置的代码仓、数据库和知识库线索，分析端到端业务流程、节点、角色、状态流转、分支、异常、补偿、时限控制和可配置化流程模型。
+version: 0.2.0
 skills:
   - process-control
 keywords:
@@ -14,6 +14,12 @@ keywords:
   - 异常
   - SLA
   - 补偿
+  - 工作流
+  - 流程配置化
+  - ReAct
+  - 代码仓
+  - 数据库
+  - 知识库
 inputs:
   required:
     - raw_requirements
@@ -23,6 +29,11 @@ inputs:
     - competitor_reference
     - constraints
     - context
+    - code_repository
+    - database_schema
+    - knowledge_base
+    - current_system_behavior
+    - workflow_engine_config
 scheduling:
   priority: 75
   dependencies:
@@ -50,6 +61,10 @@ tools:
     - list_files
     - read_file_chunk
     - grep_search
+    - clone_repository
+    - extract_structure
+    - query_database
+    - query_knowledge_base
     - write_file
     - patch_file
 outputs:
@@ -57,16 +72,22 @@ outputs:
     - process-requirements.md
     - state-transition.md
     - exception-handling.md
+    - workflow-configuration.yaml
   evidence:
     - process-control.json
+    - process-evidence-map.json
 metadata:
   boundary_contract:
     owns:
       - process flows, state transitions, branch conditions, exception handling, SLA/business timing
+      - business workflow abstraction and configurable process model
+      - process evidence mapping from RR, clarification, rules, form operations, repository, database and knowledge base clues
     excludes:
       - field-level form design
       - integration message payloads
-      - technical workflow engine implementation
+      - technical workflow engine implementation and vendor-specific engine code
+      - final database migration design
+      - API contract design
     upstream_inputs:
       - requirement-clarification
       - rules-management
@@ -79,6 +100,11 @@ metadata:
       - branch_conditions
       - exception_paths
       - business_timing
+      - workflow_configuration
+      - process_sla
+      - compensation_policy
+      - process_evidence
+      - current_system_process_clues
     owns_shared_context: false
   routing:
     keywords:
@@ -92,29 +118,47 @@ metadata:
       - 撤回
       - 超时
       - 补偿
+      - 工作流
+      - 流程配置
+      - 流程引擎
+      - 配置化
+      - ReAct
   prompt_hints:
     file_guidance:
-      process-requirements.md: 描述主流程、角色、节点、输入输出、前置后置、分支规则、竞品差异、澄清状态和待确认分支。
-      state-transition.md: 输出状态机、允许动作、状态迁移条件、禁止迁移和状态含义。
-      exception-handling.md: 覆盖异常路径、撤回/退回/作废/超时/补偿/人工介入要求。
-    default_file_guidance: 聚焦业务流程控制，不落入技术实现或接口细节。
+      process-requirements.md: 描述主流程、角色、节点、输入输出、前置后置、分支规则、竞品差异、澄清状态、待确认分支、已采用假设和证据来源；必须区分已确认流程、按假设推进流程和阻塞性待确认流程。
+      state-transition.md: 输出业务状态机、允许动作、状态迁移条件、禁止迁移、状态含义、责任角色、SLA/时限和状态不变量。
+      exception-handling.md: 覆盖异常路径、撤回/退回/作废/超时/补偿/人工介入要求，说明触发条件、责任角色、数据影响、恢复策略和是否需要业务确认。
+      workflow-configuration.yaml: 输出平台无关的配置化流程模型，包含 process_id、version、nodes、transitions、guards、actions、roles、sla、timeouts、exception_policies、compensation_policies、config_parameters、traceability；只能表达业务可配置模型，不写具体工作流引擎实现。
+    default_file_guidance: 聚焦业务流程控制、流程配置化和下游可消费结构，不落入具体技术引擎实现、接口细节或数据库迁移设计。
   delivery_contract:
     must_answer:
       - 主流程、分支、状态流转和异常路径是否完整。
       - 每个流程节点的角色、触发条件和输出是否明确。
       - 流程约束是否与规则和业务表单作业一致。
+      - 哪些流程节点、分支条件、状态迁移、SLA、超时和补偿策略应该作为可配置项。
+      - 已配置代码仓、数据库、知识库时，现有系统中有哪些流程、状态、审批、任务、事件、配置或数据线索可引用，哪些只是候选解释。
+      - 是否使用 ReAct 式“推理-行动-观察-决策”闭环验证关键流程判断，而不是只凭上游文档推断。
     evidence_expectations:
       - 必须读取 ambiguity-map.md、decision-records.md 和 requirement-maturity-assessment.md；已澄清项可作为流程依据，待确认项不得写成确定流程，按假设推进项必须标注假设来源。
       - 流程节点和分支条件应引用 RR、规则或业务表单产物。
+      - 如果项目配置了代码仓、数据库或知识库，必须使用可用工具检索流程相关线索，并把线索标注为“现有系统线索”或“候选解释”，不得直接升级为新需求事实。
+      - 每个关键判断应记录 ReAct 链路：推理目标、使用工具/行动、观察到的证据、形成的流程结论或待确认问题。
       - 无法确定的流程分支必须标为待确认。
     artifact_review_checklist:
       process-requirements.md:
         - 主流程和关键分支必须可顺序执行。
         - 待确认或按假设推进的节点、分支和异常路径必须单独标注，不能混入已确认主流程。
+        - 流程节点必须能回指规则、表单作业、澄清结论或现有系统线索。
       state-transition.md:
         - 状态迁移必须避免互相矛盾。
+        - 每个状态必须说明允许动作、禁止动作、责任角色、迁移条件和状态不变量。
       exception-handling.md:
         - 异常路径需要给出处理动作和责任角色。
+        - 超时、撤回、退回、作废、补偿和人工介入必须说明数据影响与恢复策略。
+      workflow-configuration.yaml:
+        - 必须是平台无关的业务流程配置模型，不出现具体工作流引擎、框架或代码实现细节。
+        - nodes、transitions、guards、roles、sla、exception_policies、compensation_policies 和 traceability 必须结构完整。
+        - 可配置参数必须标明默认值来源、确认状态、影响范围和是否允许按项目差异调整。
 policies:
   asset_baseline_required: true
   evidence_required: true

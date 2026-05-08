@@ -37,8 +37,12 @@ _LEGACY_DELIVERY_CHECKLIST_MAP = {
         "must_answer": [
             "主流程、分支、状态流转和异常路径是否完整。",
             "每个流程节点的角色、触发条件和输出是否明确。",
+            "哪些流程节点、分支条件、状态迁移、SLA、超时和补偿策略应该作为可配置项。",
         ],
-        "evidence_expectations": ["流程节点和分支条件应引用 RR、规则或单据产物。"],
+        "evidence_expectations": [
+            "流程节点和分支条件应引用 RR、规则或单据产物。",
+            "如果项目配置了代码仓、数据库或知识库，现有系统线索必须标注为候选解释或已确认复用依据。",
+        ],
     },
     "integration-requirements": {
         "must_answer": [

@@ -23,7 +23,7 @@ UPSTREAM_ARTIFACT_MAPPING_FALLBACK: dict[str, dict[str, list[str]]] = {
     },
     "integration-requirements": {
         "requirement-clarification": ["requirement-clarification.md", "scope-and-assumptions.md", "glossary.md"],
-        "process-control": ["process-requirements.md", "state-transition.md", "exception-handling.md"],
+        "process-control": ["process-requirements.md", "state-transition.md", "exception-handling.md", "workflow-configuration.yaml"],
         "business-form-operation": ["field-requirements.yaml", "form-data-analysis.md"],
     },
     "validator": {

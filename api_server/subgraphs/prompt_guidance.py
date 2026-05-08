@@ -19,7 +19,7 @@ _CAPABILITY_HINTS = {
     "requirement-clarification": "重点回答 RR 目标、范围、角色、术语、假设和待确认问题。",
     "rules-management": "重点回答业务规则、判定条件、计算口径、优先级、例外和参数。",
     "business-form-operation": "重点回答业务表单、字段、CRUD 作业、状态、校验、权限和作业数据分析需求。",
-    "process-control": "重点回答主流程、分支、状态流转、异常路径和业务时限。",
+    "process-control": "重点回答主流程、分支、状态流转、异常路径、业务时限和平台无关的配置化流程模型。",
     "integration-requirements": "重点回答上下游系统、业务事件、数据交换、对账和失败处理。",
     "ir-assembler": "重点回答 IR 聚合、追踪关系、验收标准和待确认问题。",
     "validator": "重点回答 IR 完整性、一致性、可追踪性和可验收性。",

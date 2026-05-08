@@ -1,0 +1,94 @@
+process_id: ""
+process_name: ""
+version: ""
+confirmation_status: "待确认"
+description: ""
+
+nodes: []
+# - id: ""
+#   name: ""
+#   type: "start | task | approval | decision | event | end"
+#   owner_role: ""
+#   input_refs: []
+#   output_refs: []
+#   confirmation_status: "已澄清 | 按假设推进 | 待确认"
+#   source_refs: []
+
+transitions: []
+# - from: ""
+#   action: ""
+#   to: ""
+#   actor_roles: []
+#   guard_ref: ""
+#   side_effects: []
+#   confirmation_status: "已澄清 | 按假设推进 | 待确认"
+#   source_refs: []
+
+guards: []
+# - id: ""
+#   expression_business: ""
+#   related_rule_refs: []
+#   related_field_refs: []
+#   confirmation_status: "已澄清 | 按假设推进 | 待确认"
+
+actions: []
+# - id: ""
+#   name: ""
+#   actor_roles: []
+#   allowed_states: []
+#   forbidden_states: []
+
+roles: []
+# - id: ""
+#   name: ""
+#   responsibilities: []
+
+sla: []
+# - id: ""
+#   applies_to: ""
+#   duration: ""
+#   reminder_policy: ""
+#   escalation_policy: ""
+#   confirmation_status: "已澄清 | 按假设推进 | 待确认"
+
+timeouts: []
+# - id: ""
+#   trigger: ""
+#   action: ""
+#   fallback: ""
+
+exception_policies: []
+# - id: ""
+#   scenario: ""
+#   trigger_condition: ""
+#   handling_action: ""
+#   responsible_role: ""
+#   data_impact: ""
+#   recovery_path: ""
+
+compensation_policies: []
+# - id: ""
+#   trigger: ""
+#   compensation_action: ""
+#   owner_role: ""
+#   audit_requirement: ""
+
+config_parameters: []
+# - key: ""
+#   object: "node | transition | guard | sla | timeout | exception | compensation"
+#   default_value: ""
+#   source_ref: ""
+#   confirmation_status: "已澄清 | 按假设推进 | 待确认"
+#   variability_scope: "project | org | role | product | scenario"
+
+traceability: []
+# - target: ""
+#   source_type: "RR | clarification | decision-record | ambiguity-map | business-rule | form-operation | repository | database | knowledge-base | competitor"
+#   source_ref: ""
+#   confidence: "high | medium | low"
+
+open_questions: []
+# - question: ""
+#   reason: ""
+#   blocks_downstream: true
+#   suggested_clarification: ""
