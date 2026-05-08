@@ -87,7 +87,7 @@ interface WorkbenchSection {
 
 const TAB_ORDER: WorkbenchTab[] = ['profile', 'skill', 'templates', 'references', 'scripts', 'tools'];
 const PHASE_ORCHESTRATION_ID = '__phase-orchestration__';
-const DEFAULT_CREATE_PHASE = 'INTERFACE';
+const DEFAULT_CREATE_PHASE = 'ANALYSIS';
 const SYSTEM_EXPERTS = ['expert-creator'];
 
 function pickDefaultCreatePhase(phases: PhaseOption[]): string {

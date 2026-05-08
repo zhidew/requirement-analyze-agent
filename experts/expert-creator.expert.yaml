@@ -1,0 +1,86 @@
+# Expert Creator - System Expert
+# Managed separately from regular BA requirement-analysis workflow experts.
+
+name: Expert Creator
+name_en: Expert Creator
+name_zh: 专家构建器
+capability: expert-creator
+description: 系统级专家，用于根据新的 BA 需求分析领域生成完整的 expert profile、SKILL 指南、模板文件和可选脚本。
+version: 1.0.0
+is_system: true
+skills:
+  - expert-creator
+keywords:
+  - 专家生成
+  - expert generation
+  - 系统专家
+  - 模板生成
+  - 工具推荐
+inputs:
+  required:
+    - expert_id
+    - name
+    - description
+  optional:
+    - name_zh
+    - name_en
+    - phase
+    - expected_outputs
+    - tool_preferences
+scheduling:
+  phase: ANALYSIS
+  priority: 5
+  dependencies: []
+upstream_artifacts: {}
+tools:
+  allowed:
+    - read_file_chunk
+    - list_files
+    - grep_search
+    - write_file
+    - patch_file
+outputs:
+  expected: []
+  evidence: []
+  generated:
+    - experts/{expert_id}.expert.yaml
+    - skills/{expert_id}/SKILL.md
+    - skills/{expert_id}/assets/templates/*
+    - skills/{expert_id}/scripts/*
+metadata:
+  boundary_contract:
+    owns:
+      - expert profile generation
+      - skill guide generation
+      - template generation
+      - optional helper script generation
+    excludes:
+      - executing the generated expert's BA requirement-analysis work
+    upstream_inputs: []
+  topic_ownership:
+    topics:
+      - expert_generation
+      - skill_generation
+      - template_generation
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 专家
+      - 构建器
+      - 生成专家
+      - Expert Creator
+      - skill
+      - profile
+policies:
+  asset_baseline_required: false
+  evidence_required: false
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+  planner_selection:
+    llm_selectable: false
+    default_selected: false
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail
