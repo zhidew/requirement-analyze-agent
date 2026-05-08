@@ -72,7 +72,7 @@ OUTPUT_CHAR_BUDGET_BY_SUFFIX = {
 OUTPUT_CHAR_BUDGET_BY_FILE = {
     ("requirement-clarification", "requirement-clarification.md"): 22000,
     ("rules-management", "business-rules.md"): 22000,
-    ("document-operation", "field-requirements.yaml"): 18000,
+    ("business-form-operation", "field-requirements.yaml"): 18000,
     ("process-control", "process-requirements.md"): 22000,
     ("integration-requirements", "integration-requirements.md"): 20000,
     ("ir-assembler", "it-requirements.md"): 30000,
@@ -130,7 +130,7 @@ DEFAULT_SHARED_CONTEXT_TOPICS = [
 DEFAULT_CAPABILITY_TOPICS = {
     "requirement-clarification": ["shared_context", "business_goal", "scope_boundary", "glossary", "assumptions", "open_questions"],
     "rules-management": ["business_rules", "decision_conditions", "calculations", "rule_priority", "exceptions", "configurable_parameters"],
-    "document-operation": ["document_objects", "field_requirements", "operation_actions", "validation_rules", "permissions", "statuses"],
+    "business-form-operation": ["business_form_objects", "field_requirements", "crud_operations", "operation_actions", "validation_rules", "permissions", "statuses", "operation_data_analysis"],
     "process-control": ["process_flows", "workflow_nodes", "state_transitions", "branch_conditions", "exception_paths", "business_timing"],
     "integration-requirements": ["external_systems", "integration_scenarios", "data_exchange", "business_events", "reconciliation", "failure_handling"],
     "validator": ["consistency_checks", "gap_analysis", "traceability_checks", "acceptance_readiness", "residual_risks"],
@@ -5144,19 +5144,19 @@ UPSTREAM_ARTIFACT_MAPPING_FALLBACK: Dict[str, Dict[str, List[str]]] = {
     "rules-management": {
         "requirement-clarification": ["requirement-clarification.md", "scope-and-assumptions.md", "glossary.md"],
     },
-    "document-operation": {
+    "business-form-operation": {
         "requirement-clarification": ["requirement-clarification.md", "scope-and-assumptions.md", "glossary.md"],
         "rules-management": ["business-rules.md", "decision-tables.md", "rule-parameters.yaml"],
     },
     "process-control": {
         "requirement-clarification": ["requirement-clarification.md", "scope-and-assumptions.md", "glossary.md"],
         "rules-management": ["business-rules.md", "decision-tables.md"],
-        "document-operation": ["document-operations.md", "field-requirements.yaml", "operation-permissions.md"],
+        "business-form-operation": ["business-form-operations.md", "field-requirements.yaml", "operation-permissions.md", "form-data-analysis.md"],
     },
     "integration-requirements": {
         "requirement-clarification": ["requirement-clarification.md", "scope-and-assumptions.md", "glossary.md"],
         "process-control": ["process-requirements.md", "state-transition.md", "exception-handling.md"],
-        "document-operation": ["field-requirements.yaml"],
+        "business-form-operation": ["field-requirements.yaml", "form-data-analysis.md"],
     },
     "validator": {
         "ir-assembler": ["it-requirements.md", "requirement-traceability.json", "acceptance-criteria.md", "open-questions.md"],

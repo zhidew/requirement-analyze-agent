@@ -12,19 +12,19 @@ UPSTREAM_ARTIFACT_MAPPING_FALLBACK: dict[str, dict[str, list[str]]] = {
     "rules-management": {
         "requirement-clarification": ["requirement-clarification.md", "scope-and-assumptions.md", "glossary.md"],
     },
-    "document-operation": {
+    "business-form-operation": {
         "requirement-clarification": ["requirement-clarification.md", "scope-and-assumptions.md", "glossary.md"],
         "rules-management": ["business-rules.md", "decision-tables.md", "rule-parameters.yaml"],
     },
     "process-control": {
         "requirement-clarification": ["requirement-clarification.md", "scope-and-assumptions.md", "glossary.md"],
         "rules-management": ["business-rules.md", "decision-tables.md"],
-        "document-operation": ["document-operations.md", "field-requirements.yaml", "operation-permissions.md"],
+        "business-form-operation": ["business-form-operations.md", "field-requirements.yaml", "operation-permissions.md", "form-data-analysis.md"],
     },
     "integration-requirements": {
         "requirement-clarification": ["requirement-clarification.md", "scope-and-assumptions.md", "glossary.md"],
         "process-control": ["process-requirements.md", "state-transition.md", "exception-handling.md"],
-        "document-operation": ["field-requirements.yaml"],
+        "business-form-operation": ["field-requirements.yaml", "form-data-analysis.md"],
     },
     "validator": {
         "ir-assembler": ["it-requirements.md", "requirement-traceability.json", "acceptance-criteria.md", "open-questions.md"],

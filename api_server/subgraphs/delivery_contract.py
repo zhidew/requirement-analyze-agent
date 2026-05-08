@@ -26,12 +26,12 @@ _LEGACY_DELIVERY_CHECKLIST_MAP = {
         ],
         "evidence_expectations": ["规则编号必须能追踪到 RR、澄清产物或竞品参考。"],
     },
-    "document-operation": {
+    "business-form-operation": {
         "must_answer": [
-            "单据对象、字段、动作、状态、校验和权限是否清楚。",
-            "字段与规则、流程、角色之间是否有可追踪关系。",
+            "业务表单对象、字段、CRUD 作业、状态、校验、权限和作业数据分析用途是否清楚。",
+            "字段、动作、状态、规则、流程、角色和分析指标之间是否有可追踪关系。",
         ],
-        "evidence_expectations": ["字段和动作必须引用 RR、规则产物、澄清产物或竞品参考。"],
+        "evidence_expectations": ["字段、动作、权限和分析指标必须引用 RR、规则产物、澄清产物、竞品参考、数据库、代码仓或知识库线索。"],
     },
     "process-control": {
         "must_answer": [

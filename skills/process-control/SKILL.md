@@ -12,18 +12,18 @@ keywords:
 
 # 工作流 (Workflow)
 
-1. 读取 RR、澄清、规则、单据作业和竞品材料，重点检查 `ambiguity-map.md`、`decision-records.md` 和 `requirement-maturity-assessment.md` 中的澄清状态。
+1. 读取 RR、澄清、规则、业务表单作业和竞品材料，重点检查 `ambiguity-map.md`、`decision-records.md` 和 `requirement-maturity-assessment.md` 中的澄清状态。
 2. 梳理主流程、角色、节点、输入输出、前置后置和分支条件。
 3. 建立状态迁移关系，明确允许动作、禁止动作和状态含义。
 4. 梳理异常、退回、撤回、作废、超时、补偿和人工介入要求。
-5. 回读产物，确认流程与规则、单据状态无冲突。
+5. 回读产物，确认流程与规则、业务表单状态无冲突。
 
 # Tool Usage Notes
 
 - 聚焦 BA 可确认的业务流程，不生成技术工作流引擎方案。
 - 对不确定的分支条件记录为待确认。
 - “待确认”项不得写成确定流程；“按假设推进”项必须标注假设来源、适用边界和下游风险。
-- 流程节点必须引用 RR、规则或单据产物作为证据。
+- 流程节点必须引用 RR、规则或业务表单产物作为证据。
 
 # 最终生成策略 (Final Generation)
 

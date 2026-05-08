@@ -30,12 +30,12 @@ phases:
       - rules-management
 
   - id: OPERATIONS
-    label_zh: 单据作业
-    label_en: Document Operations
+    label_zh: 业务表单作业
+    label_en: Business Form Operations
     executable: true
     order: 4
     experts:
-      - document-operation
+      - business-form-operation
 
   - id: PROCESS
     label_zh: 流程控制

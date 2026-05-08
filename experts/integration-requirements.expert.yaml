@@ -27,7 +27,7 @@ scheduling:
   dependencies:
     - requirement-clarification
     - process-control
-    - document-operation
+    - business-form-operation
 upstream_artifacts:
   requirement-clarification:
     - requirement-clarification.md
@@ -40,8 +40,9 @@ upstream_artifacts:
     - process-requirements.md
     - state-transition.md
     - exception-handling.md
-  document-operation:
+  business-form-operation:
     - field-requirements.yaml
+    - form-data-analysis.md
 tools:
   allowed:
     - list_files
@@ -68,7 +69,7 @@ metadata:
     upstream_inputs:
       - requirement-clarification
       - process-control
-      - document-operation
+      - business-form-operation
   topic_ownership:
     topics:
       - external_systems
@@ -104,7 +105,7 @@ metadata:
       - 哪些内容仍需后续 IT 接口设计确认。
     evidence_expectations:
       - 必须读取 ambiguity-map.md、decision-records.md 和 requirement-maturity-assessment.md；已澄清项可作为集成依据，待确认项不得写成确定集成边界，按假设推进项必须标注假设来源。
-      - 集成场景必须引用流程、单据字段或 RR 来源。
+      - 集成场景必须引用流程、业务表单字段、作业数据分析需求或 RR 来源。
       - 技术协议未知时只描述需求边界，不臆造 API 细节。
     artifact_review_checklist:
       integration-requirements.md:
@@ -113,7 +114,7 @@ metadata:
       external-system-matrix.yaml:
         - 系统矩阵字段必须稳定且可机器读取。
       data-exchange-events.md:
-        - 业务事件和数据交换要求必须能追踪到流程或单据。
+        - 业务事件和数据交换要求必须能追踪到流程或业务表单。
 policies:
   asset_baseline_required: true
   evidence_required: true

@@ -1,0 +1,160 @@
+name: Business Form Operation Expert
+name_en: Business Form Operation Expert
+name_zh: 业务表单作业专家
+capability: business-form-operation
+description: 面向财经交易类产品，分析业务作业表单、字段、CRUD 作业、状态、校验、权限、数据分析口径和操作体验要求，形成可供流程、集成和 IR 聚合专家承接的表单作业需求基线。
+version: 0.2.0
+skills:
+  - business-form-operation
+keywords:
+  - 业务表单
+  - 作业表单
+  - 表单CRUD
+  - 单据
+  - 字段
+  - 作业
+  - 操作
+  - 状态
+  - 校验
+  - 权限
+  - 数据分析
+  - 财经交易
+inputs:
+  required:
+    - raw_requirements
+    - existing_assets
+    - output_root
+  optional:
+    - competitor_reference
+    - constraints
+    - context
+    - database_schema
+    - code_repository
+    - knowledge_base
+    - existing_documents
+    - current_system_behavior
+scheduling:
+  priority: 80
+  dependencies:
+    - requirement-clarification
+    - rules-management
+upstream_artifacts:
+  requirement-clarification:
+    - requirement-clarification.md
+    - scope-and-assumptions.md
+    - glossary.md
+    - ambiguity-map.md
+    - decision-records.md
+    - requirement-maturity-assessment.md
+  rules-management:
+    - business-rules.md
+    - decision-tables.md
+    - rule-parameters.yaml
+tools:
+  allowed:
+    - list_files
+    - read_file_chunk
+    - grep_search
+    - extract_lookup_values
+    - query_database
+    - clone_repository
+    - query_knowledge_base
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - business-form-operations.md
+    - field-requirements.yaml
+    - operation-permissions.md
+    - form-data-analysis.md
+  evidence:
+    - business-form-operation.json
+metadata:
+  boundary_contract:
+    owns:
+      - business form objects, fields, CRUD and operational actions
+      - form status semantics, validation, defaulting, permissions, data scope and auditability
+      - analysis dimensions, metrics, filters and derived data needs for produced operation data
+      - current-system and competitor clues related to form operation behavior
+    excludes:
+      - cross-form end-to-end process orchestration
+      - cross-system integration contracts and payload design
+      - database table design, migration design or technical UI implementation
+      - final financial accounting rule decision
+    upstream_inputs:
+      - requirement-clarification
+      - rules-management
+  topic_ownership:
+    topics:
+      - business_form_objects
+      - field_requirements
+      - crud_operations
+      - operation_actions
+      - validation_rules
+      - permissions
+      - statuses
+      - operation_data_analysis
+      - audit_traceability
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 业务表单
+      - 作业表单
+      - 表单
+      - 单据
+      - 字段
+      - 新增
+      - 查询
+      - 查看
+      - 编辑
+      - 删除
+      - 提交
+      - 审核
+      - 作废
+      - 权限
+      - 校验
+      - 数据分析
+      - 统计
+      - 报表
+  prompt_hints:
+    file_guidance:
+      business-form-operations.md: 描述财经交易类产品中的业务表单对象、使用角色、作业场景、CRUD/提交/审核/作废等动作、状态语义、前置条件、后置结果、校验、异常处理、审计追踪和竞品差异。
+      field-requirements.yaml: 结构化字段需求，包含字段名、含义、类型倾向、必填性、来源、澄清状态、校验、展示/编辑条件、分析用途、敏感性、追踪来源和下游注意事项。
+      operation-permissions.md: 输出角色、权限、动作、数据范围、敏感操作控制、职责分离、审核/复核/作废控制和待确认权限边界。
+      form-data-analysis.md: 分析已产生作业数据的查询、筛选、统计、对账、趋势、异常识别和导出需求，标明指标口径、维度、数据来源和确认状态。
+    default_file_guidance: 聚焦业务表单作业和作业数据分析，不展开跨系统接口、数据库 DDL、前端技术实现或完整流程编排。
+  delivery_contract:
+    must_answer:
+      - BA 能否据此确认业务表单对象、字段、CRUD 作业、状态、权限和数据分析用途。
+      - 字段、动作、状态、规则、角色和分析指标之间是否有可追踪关系。
+      - 财经交易场景中的权限、职责分离、审计追踪、敏感字段和异常边界是否明确。
+      - 对已产生作业数据的查询、统计、对账、异常识别和导出需求是否被识别。
+      - 已配置的代码仓、数据库、知识库或现有系统线索是否被观察并与 RR/澄清结论区分。
+    evidence_expectations:
+      - 必须读取 ambiguity-map.md、decision-records.md 和 requirement-maturity-assessment.md；已澄清项可作为表单/字段/作业依据，待确认项不得写成确定字段或动作，按假设推进项必须标注假设来源。
+      - 必须遵循 ReAct 思路：先观察 RR、澄清产物、规则产物、竞品参考以及已配置的代码仓、数据库、知识库线索，再形成字段、动作、状态、权限和分析口径结论，最后回查产物一致性。
+      - 字段、动作、状态、权限和分析指标必须引用 RR、澄清产物、规则产物、竞品参考、数据库、代码仓、知识库或现有系统证据。
+      - 数据库、代码仓或知识库只能作为现有系统线索或候选解释，不得直接升级为新需求事实。
+      - 无证据字段、动作、权限或指标必须标注为建议、待确认或按假设推进。
+    artifact_review_checklist:
+      business-form-operations.md:
+        - 表单对象、作业动作、状态、异常和审计要求必须覆盖主要业务作业。
+        - 待确认或按假设推进的作业行为必须单独标注，不能混入已确认主结论。
+      field-requirements.yaml:
+        - 字段结构必须稳定，可被 IR 聚合、流程、集成和后续 IT 设计复用。
+        - 字段必须保留确认状态、来源、分析用途和待确认说明，避免下游把候选字段当成确定字段。
+      operation-permissions.md:
+        - 角色、动作、数据范围、敏感操作和职责分离关系必须可检查。
+      form-data-analysis.md:
+        - 查询、统计、对账、异常识别、导出和指标口径必须能追踪到字段、规则或业务目标。
+        - 不得臆造技术报表实现，只描述业务分析需求和口径。
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

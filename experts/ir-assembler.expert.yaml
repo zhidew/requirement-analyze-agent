@@ -2,7 +2,7 @@ name: IR Assembly Expert
 name_en: IR Assembly Expert
 name_zh: IR聚合专家
 capability: ir-assembler
-description: 聚合需求澄清、规则、单据、流程和集成专家产物，形成面向 IT/SE 的 IR（IT Requirements）交付包。
+description: 聚合需求澄清、规则、业务表单作业、流程和集成专家产物，形成面向 IT/SE 的 IR（IT Requirements）交付包。
 version: 0.1.0
 skills:
   - ir-assembler
@@ -26,7 +26,7 @@ scheduling:
   dependencies:
     - requirement-clarification
     - rules-management
-    - document-operation
+    - business-form-operation
     - process-control
     - integration-requirements
 upstream_artifacts:
@@ -41,10 +41,11 @@ upstream_artifacts:
     - business-rules.md
     - decision-tables.md
     - rule-parameters.yaml
-  document-operation:
-    - document-operations.md
+  business-form-operation:
+    - business-form-operations.md
     - field-requirements.yaml
     - operation-permissions.md
+    - form-data-analysis.md
   process-control:
     - process-requirements.md
     - state-transition.md
@@ -79,7 +80,7 @@ metadata:
     upstream_inputs:
       - requirement-clarification
       - rules-management
-      - document-operation
+      - business-form-operation
       - process-control
       - integration-requirements
   topic_ownership:
@@ -109,11 +110,11 @@ metadata:
       - 验收标准
   prompt_hints:
     file_guidance:
-      it-requirements.md: 聚合上游专家产物形成 IR 主文档，覆盖目标、范围、角色、规则、单据、流程、集成、非功能约束、假设、澄清状态和待确认项。
+      it-requirements.md: 聚合上游专家产物形成 IR 主文档，覆盖目标、范围、角色、规则、业务表单作业、作业数据分析、流程、集成、非功能约束、假设、澄清状态和待确认项。
       requirement-traceability.json: 建立 RR 条目、竞品参考、专家产物、IR 条款和验收标准之间的追踪关系。
       acceptance-criteria.md: 输出可验收的业务验收标准，覆盖正常、异常、权限、边界和集成场景。
       open-questions.md: 汇总所有仍需 BA/业务方/IT 确认的问题，按阻塞程度、责任方和影响范围分类。
-    default_file_guidance: 聚焦综合、对齐和追踪，不替代上游专家生成新的规则、单据、流程或集成细节。
+    default_file_guidance: 聚焦综合、对齐和追踪，不替代上游专家生成新的规则、业务表单、流程或集成细节。
   delivery_contract:
     must_answer:
       - 最终 IR 是否能让 SE 开始 IT 设计，并能追踪到 RR 或专家产物。
@@ -125,7 +126,7 @@ metadata:
       - 缺失、冲突或低置信度内容必须保留为待确认项。
     artifact_review_checklist:
       it-requirements.md:
-        - 覆盖业务目标、范围、规则、单据、流程、集成、约束和待确认事项。
+        - 覆盖业务目标、范围、规则、业务表单作业、作业数据分析、流程、集成、约束和待确认事项。
         - 不得新增未被上游事实支撑的需求。
         - 必须区分已确认需求、按假设推进需求和待确认问题。
       requirement-traceability.json:

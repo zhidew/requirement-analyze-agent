@@ -293,8 +293,10 @@ def infer_expert_id_for_file(file_name: str) -> str:
         return "requirement-clarification"
     if lower.startswith("business-rules") or lower.startswith("decision-tables") or lower.startswith("rule-parameters"):
         return "rules-management"
+    if lower.startswith("business-form-operations") or lower.startswith("form-data-analysis"):
+        return "business-form-operation"
     if lower.startswith("document-operations") or lower.startswith("field-requirements") or lower.startswith("operation-permissions"):
-        return "document-operation"
+        return "business-form-operation"
     if lower.startswith("process-requirements") or lower.startswith("state-transition") or lower.startswith("exception-handling"):
         return "process-control"
     if lower.startswith("integration-requirements") or lower.startswith("external-system-matrix") or lower.startswith("data-exchange-events"):

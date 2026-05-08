@@ -1,0 +1,51 @@
+forms:
+  # - id:
+  #   name:
+  #   label:
+  #   business_meaning:
+  #   lifecycle_statuses: []
+  #   source_refs: []
+  #   clarification_status: confirmed | pending | assumed
+  #   downstream_notes:
+fields:
+  # - id:
+  #   form_id:
+  #   name:
+  #   label:
+  #   business_meaning:
+  #   type_hint:
+  #   required:
+  #   source_refs: []
+  #   evidence_type: rr | clarification | rule | competitor | database | code | knowledge_base | assumption
+  #   clarification_status: confirmed | pending | assumed
+  #   assumption_or_pending_note:
+  #   validation_rules: []
+  #   display_condition:
+  #   edit_condition:
+  #   sensitivity: normal | sensitive | restricted
+  #   audit_requirement:
+  #   analysis_usage: []
+  #   downstream_notes:
+operations:
+  # - id:
+  #   form_id:
+  #   name:
+  #   operation_type: create | read | update | delete | submit | approve | review | void | import | export | analyze
+  #   roles: []
+  #   preconditions: []
+  #   postconditions: []
+  #   validation_refs: []
+  #   clarification_status: confirmed | pending | assumed
+analysis_needs:
+  # - id:
+  #   form_id:
+  #   metric_or_view:
+  #   dimensions: []
+  #   filters: []
+  #   source_fields: []
+  #   business_purpose:
+  #   clarification_status: confirmed | pending | assumed
+pending_fields: []
+pending_operations: []
+pending_analysis_needs: []
+assumptions: []

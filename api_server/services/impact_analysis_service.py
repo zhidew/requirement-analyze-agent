@@ -22,8 +22,8 @@ def _infer_change_type(source_artifact: Dict[str, Any], revision_delta: Optional
         return "clarification_change"
     if expert_id == "rules-management" or file_name in {"business-rules.md", "decision-tables.md", "rule-parameters.yaml"}:
         return "rule_change"
-    if expert_id == "document-operation" or file_name in {"document-operations.md", "field-requirements.yaml", "operation-permissions.md"}:
-        return "document_operation_change"
+    if expert_id in {"business-form-operation", "document-operation"} or file_name in {"business-form-operations.md", "document-operations.md", "field-requirements.yaml", "operation-permissions.md", "form-data-analysis.md"}:
+        return "business_form_operation_change"
     if expert_id == "process-control" or file_name in {"process-requirements.md", "state-transition.md", "exception-handling.md"}:
         return "process_change"
     if expert_id == "integration-requirements" or file_name in {"integration-requirements.md", "external-system-matrix.yaml", "data-exchange-events.md"}:
@@ -41,7 +41,7 @@ def _status_for_downstream(change_type: str, downstream: Dict[str, Any], has_blo
     expert_id = str(downstream.get("expert_id") or "")
     if expert_id in {"ir-assembler", "validator"}:
         return "needs_regeneration"
-    if change_type in {"clarification_change", "rule_change", "document_operation_change", "process_change", "integration_requirement_change"}:
+    if change_type in {"clarification_change", "rule_change", "business_form_operation_change", "document_operation_change", "process_change", "integration_requirement_change"}:
         return "needs_revalidation"
     return "needs_revalidation"
 

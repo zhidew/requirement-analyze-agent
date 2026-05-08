@@ -13,6 +13,12 @@ import { HumanInteractionPanel } from './HumanInteractionPanel';
 
 const AGENT_MAPPING: Record<string, string[]> = {
   planner: ['requirements.json', 'input-requirements.md', 'original-requirements.md'],
+  'requirement-clarification': ['requirement-clarification.md', 'scope-and-assumptions.md', 'glossary.md', 'clarification-questionnaire.md', 'ambiguity-map.md', 'requirement-maturity-assessment.md', 'decision-records.md'],
+  'rules-management': ['business-rules.md', 'decision-tables.md', 'rule-parameters.yaml'],
+  'business-form-operation': ['business-form-operations.md', 'field-requirements.yaml', 'operation-permissions.md', 'form-data-analysis.md'],
+  'process-control': ['process-requirements.md', 'state-transition.md', 'exception-handling.md'],
+  'integration-requirements': ['integration-requirements.md', 'external-system-matrix.yaml', 'data-exchange-events.md'],
+  'ir-assembler': ['it-requirements.md', 'requirement-traceability.json', 'acceptance-criteria.md', 'open-questions.md'],
   'modular-design': ['architecture.md', 'module-map.json'],
   'integration-design': ['integration-', 'asyncapi.yaml'],
   'config-design': ['config-catalog.yaml', 'config-matrix.md'],
