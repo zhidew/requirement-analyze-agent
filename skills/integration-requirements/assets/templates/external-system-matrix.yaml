@@ -10,5 +10,23 @@ external_systems:
   #   source_refs: []
   #   clarification_status: confirmed | pending | assumed
   #   assumption_or_pending_note:
+  #   downstream_design_notes:
+  #   current_system_clues:
+  #     code_repository: []
+  #     database: []
+  #     knowledge_base: []
 pending_systems: []
 assumptions: []
+resource_probe_status:
+  code_repositories:
+    configured: false
+    status: not_checked
+    notes: []
+  databases:
+    configured: false
+    status: not_checked
+    notes: []
+  knowledge_bases:
+    configured: false
+    status: not_checked
+    notes: []

@@ -2,8 +2,8 @@ name: Integration Requirements Expert
 name_en: Integration Requirements Expert
 name_zh: 集成需求专家
 capability: integration-requirements
-description: 从 BA 视角识别上下游系统、业务事件、数据交换、触发时机、对账、失败处理和接口需求边界。
-version: 0.1.0
+description: 从 BA 与集成分析视角，结合 RR、澄清结论、流程/表单产物，以及已配置的代码仓、数据库和知识库线索，识别上下游系统、业务事件、数据交换、触发时机、对账、失败处理和接口需求边界。
+version: 0.2.0
 skills:
   - integration-requirements
 keywords:
@@ -13,6 +13,12 @@ keywords:
   - 数据交换
   - 业务事件
   - 对账
+  - 失败处理
+  - 补偿
+  - ReAct
+  - 代码仓
+  - 数据库
+  - 知识库
 inputs:
   required:
     - raw_requirements
@@ -22,6 +28,12 @@ inputs:
     - competitor_reference
     - constraints
     - context
+    - database_schema
+    - code_repository
+    - knowledge_base
+    - existing_documents
+    - current_system_behavior
+    - historical_integration_docs
 scheduling:
   priority: 70
   dependencies:
@@ -47,8 +59,11 @@ upstream_artifacts:
 tools:
   allowed:
     - list_files
+    - clone_repository
+    - extract_structure
     - read_file_chunk
     - grep_search
+    - query_database
     - query_knowledge_base
     - write_file
     - patch_file
@@ -62,11 +77,13 @@ outputs:
 metadata:
   boundary_contract:
     owns:
-      - upstream/downstream systems, integration scenarios, data exchange needs, failure and reconciliation requirements
+      - upstream/downstream systems, integration scenarios, business events, data exchange needs, failure, compensation, reconciliation requirements, and integration open questions
     excludes:
       - OpenAPI or AsyncAPI technical contract details
       - database schema design
       - middleware implementation
+      - final protocol selection
+      - endpoint, topic, queue, file layout or technical field design
     upstream_inputs:
       - requirement-clarification
       - process-control
@@ -79,6 +96,9 @@ metadata:
       - business_events
       - reconciliation
       - failure_handling
+      - compensation
+      - current_system_integration_clues
+      - integration_open_questions
     owns_shared_context: false
   routing:
     keywords:
@@ -96,26 +116,49 @@ metadata:
   prompt_hints:
     file_guidance:
       integration-requirements.md: 输出集成场景、系统边界、触发时机、业务目的、成功/失败处理、澄清状态和待确认接口需求。
-      external-system-matrix.yaml: 结构化上下游系统清单，包含系统、角色、交互方向、数据对象、时效、责任边界和确认状态。
-      data-exchange-events.md: 梳理业务事件、数据交换内容、触发条件、消费方、对账和补偿要求。
+      external-system-matrix.yaml: 结构化上下游系统清单，包含系统、角色、交互方向、数据对象、时效、责任边界、来源证据、确认状态和下游设计提示。
+      data-exchange-events.md: 梳理业务事件、数据交换内容、触发条件、生产方、消费方、对账、补偿和澄清状态。
     default_file_guidance: 保持 BA 需求视角，不生成技术 API/消息协议。
   delivery_contract:
     must_answer:
       - 需要哪些上下游系统参与，以及各自业务责任是什么。
       - 数据交换的触发、时效、失败处理和对账要求是否明确。
+      - 已配置的代码仓、数据库、知识库中是否存在可引用的现有系统集成线索。
+      - 哪些集成结论是已确认、待确认、按假设推进或非本轮范围。
       - 哪些内容仍需后续 IT 接口设计确认。
     evidence_expectations:
       - 必须读取 ambiguity-map.md、decision-records.md 和 requirement-maturity-assessment.md；已澄清项可作为集成依据，待确认项不得写成确定集成边界，按假设推进项必须标注假设来源。
       - 集成场景必须引用流程、业务表单字段、作业数据分析需求或 RR 来源。
+      - 项目配置了代码仓时，必须尝试读取现有集成调用、回调、任务、适配器、客户端或事件线索；不可用时记录原因。
+      - 项目配置了数据库时，必须尝试识别外部单号、状态、同步、对账、失败原因或批次相关线索；不可用时记录原因。
+      - 项目配置了知识库时，必须检索历史接口说明、系统清单、流程或设计文档；不可用时记录原因。
+      - 代码仓、数据库和知识库线索只能作为现有系统线索或候选解释，不能直接升级为新需求事实。
       - 技术协议未知时只描述需求边界，不臆造 API 细节。
     artifact_review_checklist:
       integration-requirements.md:
         - 集成场景、系统边界、异常处理和待确认项必须完整。
+        - 必须包含代码仓、数据库、知识库配置与查询状态摘要；无配置或查询失败也要说明。
         - 待确认或按假设推进的系统边界、数据交换和对账要求必须单独标注。
+        - 不得生成 OpenAPI、AsyncAPI、endpoint、topic、queue、技术字段或中间件实现细节。
       external-system-matrix.yaml:
         - 系统矩阵字段必须稳定且可机器读取。
+        - 每个系统必须包含来源证据、确认状态、责任边界和下游设计提示。
       data-exchange-events.md:
         - 业务事件和数据交换要求必须能追踪到流程或业务表单。
+        - 每个事件必须说明生产方、消费方、时效、失败处理、补偿、对账和澄清状态。
+    react_policy:
+      required: true
+      loop: observation_thought_action_result
+      resource_probe_order:
+        - upstream_artifacts
+        - knowledge_base
+        - code_repository
+        - database
+      stop_conditions:
+        - all_confirmed_integration_scenarios_are_traced
+        - pending_or_assumed_items_are_marked
+        - downstream_it_design_questions_are_separated
+        - no_technical_contract_details_are_invented
 policies:
   asset_baseline_required: true
   evidence_required: true
