@@ -27,11 +27,15 @@ scheduling:
   dependencies:
     - requirement-clarification
     - process-control
+    - document-operation
 upstream_artifacts:
   requirement-clarification:
     - requirement-clarification.md
     - scope-and-assumptions.md
     - glossary.md
+    - ambiguity-map.md
+    - decision-records.md
+    - requirement-maturity-assessment.md
   process-control:
     - process-requirements.md
     - state-transition.md
@@ -89,7 +93,7 @@ metadata:
       - 外部系统
   prompt_hints:
     file_guidance:
-      integration-requirements.md: 输出集成场景、系统边界、触发时机、业务目的、成功/失败处理和待确认接口需求。
+      integration-requirements.md: 输出集成场景、系统边界、触发时机、业务目的、成功/失败处理、澄清状态和待确认接口需求。
       external-system-matrix.yaml: 结构化上下游系统清单，包含系统、角色、交互方向、数据对象、时效、责任边界和确认状态。
       data-exchange-events.md: 梳理业务事件、数据交换内容、触发条件、消费方、对账和补偿要求。
     default_file_guidance: 保持 BA 需求视角，不生成技术 API/消息协议。
@@ -99,11 +103,13 @@ metadata:
       - 数据交换的触发、时效、失败处理和对账要求是否明确。
       - 哪些内容仍需后续 IT 接口设计确认。
     evidence_expectations:
+      - 必须读取 ambiguity-map.md、decision-records.md 和 requirement-maturity-assessment.md；已澄清项可作为集成依据，待确认项不得写成确定集成边界，按假设推进项必须标注假设来源。
       - 集成场景必须引用流程、单据字段或 RR 来源。
       - 技术协议未知时只描述需求边界，不臆造 API 细节。
     artifact_review_checklist:
       integration-requirements.md:
         - 集成场景、系统边界、异常处理和待确认项必须完整。
+        - 待确认或按假设推进的系统边界、数据交换和对账要求必须单独标注。
       external-system-matrix.yaml:
         - 系统矩阵字段必须稳定且可机器读取。
       data-exchange-events.md:

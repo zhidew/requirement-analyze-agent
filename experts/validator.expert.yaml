@@ -25,6 +25,7 @@ inputs:
 scheduling:
   priority: 10
   dependencies:
+    - requirement-clarification
     - ir-assembler
 upstream_artifacts:
   ir-assembler:
@@ -32,6 +33,10 @@ upstream_artifacts:
     - requirement-traceability.json
     - acceptance-criteria.md
     - open-questions.md
+  requirement-clarification:
+    - ambiguity-map.md
+    - decision-records.md
+    - requirement-maturity-assessment.md
 tools:
   allowed:
     - list_files
@@ -80,13 +85,16 @@ metadata:
       - IR 是否完整覆盖 RR、竞品参考和专家产物中的关键需求。
       - IR 条款是否存在冲突、重复、不可验收或不可追踪问题。
       - 哪些问题会阻塞进入 IT 设计。
+      - 待确认项、按假设推进项是否在 IR 中被正确保留状态，没有被升级成已确认需求。
     evidence_expectations:
       - 每个问题都要给出文件、条款或证据来源。
+      - 必须对照 ambiguity-map.md、decision-records.md、requirement-maturity-assessment.md 和 open-questions.md，检查澄清状态是否闭环。
       - 修复建议必须具体，不应只是泛泛提醒。
     artifact_review_checklist:
       validation-report.md:
         - 需要按阻塞、警告、通过项和建议动作分类。
         - 每条问题都要说明影响和证据。
+        - 必须检查待确认项是否被错误写成已确认需求，以及按假设推进项是否保留假设来源。
 policies:
   asset_baseline_required: true
   evidence_required: true

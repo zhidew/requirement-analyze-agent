@@ -31,6 +31,9 @@ upstream_artifacts:
     - requirement-clarification.md
     - scope-and-assumptions.md
     - glossary.md
+    - ambiguity-map.md
+    - decision-records.md
+    - requirement-maturity-assessment.md
 tools:
   allowed:
     - list_files
@@ -78,7 +81,7 @@ metadata:
       - 例外
   prompt_hints:
     file_guidance:
-      business-rules.md: 按规则编号输出触发条件、判断逻辑、结果、例外、优先级、来源和待确认点。
+      business-rules.md: 按规则编号输出触发条件、判断逻辑、结果、例外、优先级、来源、澄清状态、推进假设和待确认点。
       decision-tables.md: 将复杂判断转为决策表，覆盖条件组合、输出动作和冲突处理。
       rule-parameters.yaml: 结构化输出可配置参数、默认值、取值范围、生效范围和变更影响。
     default_file_guidance: 聚焦规则和口径，不重写流程、单据或集成要求。
@@ -89,10 +92,12 @@ metadata:
       - 哪些规则应参数化或配置化。
     evidence_expectations:
       - 规则编号必须能追踪到 RR、澄清产物或竞品参考。
+      - 必须读取 ambiguity-map.md、decision-records.md 和 requirement-maturity-assessment.md；已澄清项可作为规则依据，待确认项不得写成确定规则，按假设推进项必须标注假设来源。
       - 推断规则必须标注假设和待确认状态。
     artifact_review_checklist:
       business-rules.md:
         - 规则描述必须包含触发条件、逻辑、输出、例外和来源。
+        - 每条规则必须标明确认状态；待确认或按假设推进的规则不能与已确认规则混写。
       decision-tables.md:
         - 条件组合不得遗漏关键路径，冲突处理必须明确。
       rule-parameters.yaml:

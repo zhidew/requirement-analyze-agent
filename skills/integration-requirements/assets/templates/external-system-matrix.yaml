@@ -1,2 +1,14 @@
-external_systems: []
-
+external_systems:
+  # - id:
+  #   name:
+  #   role: upstream | downstream | peer | external_party
+  #   interaction_direction: inbound | outbound | bidirectional
+  #   business_purpose:
+  #   data_objects: []
+  #   timing_requirement:
+  #   responsibility_boundary:
+  #   source_refs: []
+  #   clarification_status: confirmed | pending | assumed
+  #   assumption_or_pending_note:
+pending_systems: []
+assumptions: []

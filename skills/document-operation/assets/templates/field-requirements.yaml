@@ -1,2 +1,16 @@
-fields: []
-
+fields:
+  # - id:
+  #   name:
+  #   label:
+  #   business_meaning:
+  #   type_hint:
+  #   required:
+  #   source_refs: []
+  #   clarification_status: confirmed | pending | assumed
+  #   assumption_or_pending_note:
+  #   validation_rules: []
+  #   display_condition:
+  #   edit_condition:
+  #   downstream_notes:
+pending_fields: []
+assumptions: []

@@ -2,8 +2,8 @@ name: Requirement Clarification Expert
 name_en: Requirement Clarification Expert
 name_zh: 需求澄清专家
 capability: requirement-clarification
-description: 面向 BA 梳理 RR 中的业务目标、范围、角色、术语、假设、疑问和待确认事项，形成可供后续专家使用的澄清基线。
-version: 0.1.0
+description: 面向 BA 对业务人员提出的粗颗粒度需求进行资料研读、系统现状分析、brainstorm 和多轮选择题式澄清，逐步补齐业务目标、范围、角色、场景、数据、规则、假设和待确认事项，形成可供后续专家使用的澄清基线。
+version: 0.2.0
 skills:
   - requirement-clarification
 keywords:
@@ -14,6 +14,10 @@ keywords:
   - 范围
   - 术语
   - 假设
+  - 多轮澄清
+  - 选择题
+  - 需求颗粒度
+  - Brainstorm
 inputs:
   required:
     - raw_requirements
@@ -22,6 +26,14 @@ inputs:
     - competitor_reference
     - constraints
     - context
+    - database_schema
+    - code_repository
+    - knowledge_base
+    - existing_documents
+    - historical_requirements
+    - business_process_docs
+    - current_system_behavior
+    - stakeholder_profile
 scheduling:
   priority: 95
   dependencies: []
@@ -38,16 +50,28 @@ outputs:
     - requirement-clarification.md
     - scope-and-assumptions.md
     - glossary.md
+    - clarification-questionnaire.md
+    - ambiguity-map.md
+    - requirement-maturity-assessment.md
+    - decision-records.md
   evidence:
     - requirement-clarification.json
+    - clarification-dialogue-log.json
 metadata:
   boundary_contract:
     owns:
       - RR clarification baseline, scope, assumptions, glossary, open questions
+      - ambiguity and missing-information analysis
+      - multi-round business clarification questions
+      - requirement granularity and maturity assessment
+      - confirmed business clarification decisions
     excludes:
       - detailed business rules
       - workflow decomposition
       - integration contract design
+      - final UI prototype design
+      - database migration design
+      - technical implementation decision
     upstream_inputs: []
   topic_ownership:
     topics:
@@ -55,6 +79,13 @@ metadata:
       - business_goal
       - scope_boundary
       - stakeholders
+      - business_scenarios
+      - data_objects
+      - current_system_clues
+      - ambiguity_points
+      - clarification_questions
+      - clarification_decisions
+      - requirement_maturity
       - glossary
       - assumptions
       - open_questions
@@ -65,7 +96,9 @@ metadata:
       - competitor_reference_summary
       - scope
       - target_outcomes
-    generic_shared_context_section_examples: 业务背景 / RR概述 / 竞品参考摘要 / 范围说明 / 目标结果
+      - current_system_summary
+      - confirmed_decisions
+    generic_shared_context_section_examples: 业务背景 / RR概述 / 现有系统线索 / 竞品参考摘要 / 范围说明 / 已确认决策 / 目标结果
   routing:
     keywords:
       - 澄清
@@ -74,30 +107,77 @@ metadata:
       - 术语
       - 假设
       - 待确认
+      - 选择题
+      - 多轮
+      - 颗粒度
+      - 业务人员
+      - brainstorm
       - ambiguous
       - clarification
   prompt_hints:
     file_guidance:
-      requirement-clarification.md: 提炼 RR 的业务目标、角色、场景、输入材料事实、待确认问题和澄清结论，标注证据来源与置信度。
+      requirement-clarification.md: 提炼 RR 的业务目标、角色、场景、输入材料事实、现有系统线索、待确认问题和澄清结论，标注证据来源与置信度。
       scope-and-assumptions.md: 明确本次 IR 覆盖范围、排除范围、关键假设、约束、风险和后续确认点。
       glossary.md: 输出业务术语表，包含术语、定义、别名、来源、歧义和推荐统一命名。
-    default_file_guidance: 只建立需求理解基线，不展开规则、单据、流程或集成细节。
+      clarification-questionnaire.md: 输出面向业务人员的多轮澄清问题，每轮优先 3-7 个高价值问题，以单选、多选、确认题为主，说明提问原因、选项含义和回答影响。
+      ambiguity-map.md: 作为需求不确定性识别与处置台账，梳理模糊点、缺失点、冲突点、隐含假设、潜在异常场景和影响范围；每项必须标明已澄清、待确认、按假设推进或非本轮范围，并写清澄清结论/当前假设、是否阻塞下游以及下游处理建议。
+      requirement-maturity-assessment.md: 按业务目标、角色、场景、数据对象、输入输出、主流程、异常流程、权限边界、规则条件、验收标准、现有系统关系等维度评估需求颗粒度。
+      decision-records.md: 记录已由业务人员或 BA 确认的关键选择、确认时间、证据来源、影响范围和仍需后续专家处理的事项。
+    default_file_guidance: 只建立需求理解基线和澄清问题，不展开最终规则、单据、流程、接口、数据库或 UI 设计细节。
   delivery_contract:
     must_answer:
       - RR 的业务目标、用户角色、范围边界和待确认问题是否清楚。
+      - 当前需求颗粒度是否足以进入后续规则、流程、接口和文档分析。
+      - 哪些模糊点、缺失点、冲突点和隐含假设需要优先向业务人员确认。
+      - 已有数据库、代码仓、知识库、历史资料或现有系统行为中有哪些可引用线索。
+      - 每轮应向业务人员提出哪些高价值选择题、确认题或补充题。
       - 竞品参考中的可借鉴能力、差异点和不适用点是否被标出。
       - 后续专家可以依赖哪些术语、假设和范围约束。
     evidence_expectations:
-      - 每个澄清结论应能回指 RR、上传材料、竞品参考或人工回答。
+      - 每个澄清结论应能回指 RR、上传材料、竞品参考、数据库、代码仓、知识库、历史资料、现有系统行为或人工回答。
       - 无法确认的信息必须进入待确认项，不得写成事实。
+      - 通过 brainstorm 得出的候选解释必须标注为候选项或假设，不能直接升级为已确认结论。
+      - 业务人员的选择题回答必须沉淀为决策记录或待确认残留项。
     artifact_review_checklist:
       requirement-clarification.md:
-        - 需要覆盖目标、角色、场景、事实依据、歧义和待确认事项。
+        - 需要覆盖目标、角色、场景、事实依据、现有系统线索、歧义和待确认事项。
         - 不得把推测写成已确认需求。
       scope-and-assumptions.md:
         - 覆盖范围、排除范围、约束、假设和风险必须清晰。
       glossary.md:
         - 术语定义、来源和歧义处理需要稳定可复用。
+      clarification-questionnaire.md:
+        - 问题必须面向业务人员易回答，优先使用单选、多选、是/否确认和少量补充题。
+        - 每个问题必须说明提问原因、候选选项和回答影响。
+        - 每轮问题数量应控制在 3-7 个高价值问题。
+      ambiguity-map.md:
+        - 模糊点、缺失点、冲突点、隐含假设和潜在异常场景必须分类。
+        - 每项必须标明澄清状态、结论或推进假设、是否阻塞下游以及下游处理建议。
+        - 待确认且阻塞下游的条目必须进入澄清问题清单；按假设推进的条目必须同步进入范围与假设。
+      requirement-maturity-assessment.md:
+        - 必须给出需求颗粒度成熟度、阻塞项、非阻塞残留项和下一步建议。
+      decision-records.md:
+        - 已确认选择必须能追溯来源，未确认内容必须保留待确认状态。
+    clarification_policy:
+      preferred_question_style: multiple_choice_first
+      max_questions_per_round: 7
+      min_questions_per_round: 3
+      allow_free_text_followup: true
+      question_types:
+        - single_choice
+        - multiple_choice
+        - yes_no
+        - ranking
+        - short_answer_when_options_insufficient
+      stop_conditions:
+        - business_goal_confirmed
+        - key_roles_confirmed
+        - in_scope_and_out_of_scope_confirmed
+        - main_scenarios_confirmed
+        - critical_data_objects_confirmed
+        - key_exceptions_have_direction
+        - remaining_unknowns_do_not_block_downstream_experts
+        - low_confidence_items_are_marked_as_assumptions_or_open_questions
 policies:
   asset_baseline_required: true
   evidence_required: true

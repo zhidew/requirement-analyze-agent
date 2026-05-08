@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { api, type ClarifiedRequirementsPayload, type DesignArtifact, type InteractionRecord } from '../api';
-import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square, Clock3 } from 'lucide-react';
+import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, BarChart3, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square, Clock3 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { TaskKanban } from './TaskKanban';
@@ -40,7 +40,7 @@ type RunStatus = 'scheduled' | 'queued' | 'running' | 'waiting_human' | 'success
 type ArtifactStatus = 'created' | 'updated';
 
 interface InputFile {
-  type: 'ir' | 'physical' | 'logical' | 'dict' | 'lookup';
+  type: 'ir' | 'competitor';
   file: File;
 }
 
@@ -2195,10 +2195,7 @@ export function ProjectDetail() {
 
             <div className="grid grid-cols-1 gap-2">
               {renderUploadBtn('ir', t('projectDetail.uploadIR'), <FileText size={14} />, true)}
-              {renderUploadBtn('physical', t('projectDetail.uploadPhysical'), <Database size={14} />)}
-              {renderUploadBtn('logical', t('projectDetail.uploadLogical'), <Layers size={14} />)}
-              {renderUploadBtn('dict', t('projectDetail.uploadDict'), <Book size={14} />)}
-              {renderUploadBtn('lookup', t('projectDetail.uploadLookup'), <List size={14} />)}
+              {renderUploadBtn('competitor', t('projectDetail.uploadCompetitor'), <BarChart3 size={14} />)}
             </div>
 
             <div className="h-px bg-gray-50" />

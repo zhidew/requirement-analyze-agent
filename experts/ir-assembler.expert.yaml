@@ -23,8 +23,36 @@ inputs:
     - context
 scheduling:
   priority: 20
-  dependencies: []
-upstream_artifacts: {}
+  dependencies:
+    - requirement-clarification
+    - rules-management
+    - document-operation
+    - process-control
+    - integration-requirements
+upstream_artifacts:
+  requirement-clarification:
+    - requirement-clarification.md
+    - scope-and-assumptions.md
+    - glossary.md
+    - ambiguity-map.md
+    - decision-records.md
+    - requirement-maturity-assessment.md
+  rules-management:
+    - business-rules.md
+    - decision-tables.md
+    - rule-parameters.yaml
+  document-operation:
+    - document-operations.md
+    - field-requirements.yaml
+    - operation-permissions.md
+  process-control:
+    - process-requirements.md
+    - state-transition.md
+    - exception-handling.md
+  integration-requirements:
+    - integration-requirements.md
+    - external-system-matrix.yaml
+    - data-exchange-events.md
 tools:
   allowed:
     - list_files
@@ -48,7 +76,12 @@ metadata:
       - invention of unsupported requirements
       - detailed technical design
       - implementation task breakdown
-    upstream_inputs: []
+    upstream_inputs:
+      - requirement-clarification
+      - rules-management
+      - document-operation
+      - process-control
+      - integration-requirements
   topic_ownership:
     topics:
       - shared_context
@@ -76,7 +109,7 @@ metadata:
       - 验收标准
   prompt_hints:
     file_guidance:
-      it-requirements.md: 聚合上游专家产物形成 IR 主文档，覆盖目标、范围、角色、规则、单据、流程、集成、非功能约束、假设和待确认项。
+      it-requirements.md: 聚合上游专家产物形成 IR 主文档，覆盖目标、范围、角色、规则、单据、流程、集成、非功能约束、假设、澄清状态和待确认项。
       requirement-traceability.json: 建立 RR 条目、竞品参考、专家产物、IR 条款和验收标准之间的追踪关系。
       acceptance-criteria.md: 输出可验收的业务验收标准，覆盖正常、异常、权限、边界和集成场景。
       open-questions.md: 汇总所有仍需 BA/业务方/IT 确认的问题，按阻塞程度、责任方和影响范围分类。
@@ -84,15 +117,17 @@ metadata:
   delivery_contract:
     must_answer:
       - 最终 IR 是否能让 SE 开始 IT 设计，并能追踪到 RR 或专家产物。
-      - 上游产物之间的冲突、缺口和残余假设是否被标出。
+      - 上游产物之间的冲突、缺口、澄清状态和残余假设是否被标出。
       - 验收标准和待确认问题是否结构化且可执行。
     evidence_expectations:
       - 每个 IR 条款需要引用 RR、竞品参考、人工澄清或上游专家产物。
+      - 必须读取 ambiguity-map.md、decision-records.md 和 requirement-maturity-assessment.md；待确认项不得被升级成确定 IR 条款，按假设推进项必须在 IR 中标注假设来源。
       - 缺失、冲突或低置信度内容必须保留为待确认项。
     artifact_review_checklist:
       it-requirements.md:
         - 覆盖业务目标、范围、规则、单据、流程、集成、约束和待确认事项。
         - 不得新增未被上游事实支撑的需求。
+        - 必须区分已确认需求、按假设推进需求和待确认问题。
       requirement-traceability.json:
         - 追踪关系字段稳定且标注覆盖状态。
       acceptance-criteria.md:
