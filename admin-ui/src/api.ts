@@ -425,6 +425,13 @@ export const api = {
     type: string;
     path?: string;
     index_url?: string;
+    url?: string;
+    branch?: string;
+    username?: string;
+    token?: string;
+    local_path?: string;
+    repo_path?: string;
+    source_repository_id?: string;
     includes?: string[];
     description?: string;
   }) => apiClient.post(`/projects/${projectId}/config/knowledge-bases`, payload).then(res => res.data),
@@ -509,6 +516,13 @@ export const api = {
     type: string;
     path?: string;
     index_url?: string;
+    url?: string;
+    branch?: string;
+    username?: string;
+    token?: string;
+    local_path?: string;
+    repo_path?: string;
+    source_repository_id?: string;
     includes?: string[];
     description?: string;
   }) => apiClient.post(`/projects/${projectId}/config/knowledge-bases/test`, payload).then(res => res.data),

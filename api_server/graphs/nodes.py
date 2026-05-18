@@ -295,6 +295,8 @@ def _build_project_asset_context(project_id: str) -> Dict[str, Any]:
                 "id": kb["id"],
                 "name": kb["name"],
                 "type": kb["type"],
+                "branch": kb.get("branch"),
+                "repo_path": kb.get("repo_path"),
                 "includes": kb.get("includes") or [],
                 "description": kb.get("description"),
             }
@@ -1823,7 +1825,7 @@ Output JSON format:
             node_type="planner",
             question="请确认本次参与执行的专家。开始执行前，你可以补充专家或取消勾选。",
             context=_build_expert_selection_interrupt_context(
-                enabled_expert_ids=design_expert_ids,
+                enabled_expert_ids=analysis_expert_ids,
                 recommended_expert_ids=recommended_experts,
                 auto_selected_expert_ids=sorted(set(policy_auto_selected) | set(configured_default_selected)),
             ),

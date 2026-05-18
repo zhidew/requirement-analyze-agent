@@ -237,6 +237,11 @@ async def test_database_config(project_id: str, req: DatabaseConfig):
 async def test_knowledge_base_config(project_id: str, req: KnowledgeBaseConfig):
     _require_project(project_id)
     payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    payload["project_id"] = project_id
+    if payload.get("token") is None and payload.get("id"):
+        existing = metadata_db.get_knowledge_base(project_id, payload["id"], include_secrets=True)
+        if existing:
+            payload["token"] = existing.get("token")
     result = test_knowledge_base_connection(payload)
     return result.to_dict()
 

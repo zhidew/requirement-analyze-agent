@@ -62,8 +62,16 @@ interface KnowledgeBaseConfig {
   type: string;
   path?: string;
   index_url?: string;
+  url?: string;
+  branch?: string;
+  username?: string;
+  token?: string;
+  local_path?: string;
+  repo_path?: string;
+  source_repository_id?: string;
   includes?: string[];
   description?: string;
+  has_token?: boolean;
 }
 
 interface ExpertConfig {
@@ -150,6 +158,13 @@ const createKnowledgeBase = (): KnowledgeBaseConfig => ({
   type: 'local',
   path: '',
   index_url: '',
+  url: '',
+  branch: 'main',
+  username: '',
+  token: '',
+  local_path: '',
+  repo_path: '',
+  source_repository_id: '',
   includes: [],
   description: '',
 });
@@ -335,7 +350,10 @@ export function ProjectConfig() {
     setTestingKb(true);
     setTestResult(null);
     try {
-      const res = await api.testProjectKnowledgeBase(projectId, editingKb);
+      const res = await api.testProjectKnowledgeBase(projectId, {
+        ...editingKb,
+        token: editingKb.token?.trim() || undefined,
+      });
       setTestResult(res);
     } catch (err: any) {
       setTestResult({ success: false, message: err.response?.data?.detail || err.message });
@@ -417,6 +435,20 @@ export function ProjectConfig() {
   const buildMissingPhaseEnableMessage = (expert: ExpertConfig) => {
     const { primary } = getExpertDisplayNames(expert);
     return t('projectConfig.experts.phaseMissingEnableMessage', { name: primary });
+  };
+
+  const getKnowledgeBaseLocationLabel = (kb: KnowledgeBaseConfig) => {
+    if (kb.type === 'local') return kb.path || '';
+    if (kb.type === 'remote') return kb.index_url || '';
+    return kb.repo_path || kb.url || kb.source_repository_id || '';
+  };
+
+  const isKnowledgeBaseTestDisabled = (kb: KnowledgeBaseConfig) => {
+    if (testingKb) return true;
+    if (kb.type === 'local') return !kb.path;
+    if (kb.type === 'remote') return !kb.index_url;
+    if (kb.type === 'git') return !kb.url && !kb.source_repository_id;
+    return true;
   };
 
   const llmCopy = useMemo(() => ({
@@ -616,10 +648,13 @@ export function ProjectConfig() {
       await api.saveKnowledgeBaseConfig(projectId, {
         ...kb,
         includes: kb.includes || [],
+        branch: kb.branch || 'main',
+        token: kb.token?.trim() ? kb.token.trim() : undefined,
       });
       setSaving(false);
       setIsSaved(true);
       await loadAll();
+      setEditingKb(prev => prev ? { ...prev, token: '', has_token: prev.type === 'git' ? true : prev.has_token } : null);
       setTimeout(() => setIsSaved(false), 3000);
     } catch (error: any) {
       setSaving(false);
@@ -1186,7 +1221,7 @@ export function ProjectConfig() {
                       <div
                         key={kb.id}
                         onClick={() => {
-                          setEditingKb({ ...kb });
+                          setEditingKb({ ...kb, token: '' });
                           setIsNewKb(false);
                           setTestResult(null);
                           setIsKbModalOpen(true);
@@ -1199,7 +1234,7 @@ export function ProjectConfig() {
                             <div className="text-[10px] font-mono text-gray-400 mt-1 flex items-center gap-2">
                               <span className="uppercase">{kb.type}</span>
                               <span className="w-1 h-1 rounded-full bg-gray-300" />
-                              <span className="truncate">{kb.type === 'local' ? (kb.path || '') : (kb.index_url || '')}</span>
+                              <span className="truncate">{getKnowledgeBaseLocationLabel(kb)}</span>
                             </div>
                           </div>
                           <button
@@ -1212,6 +1247,13 @@ export function ProjectConfig() {
                             <Trash2 size={14} />
                           </button>
                         </div>
+                        {kb.type === 'git' && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 text-[8px] font-bold uppercase">{kb.branch || 'main'}</span>
+                            {kb.repo_path && <span className="px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 text-[8px] font-bold uppercase">{kb.repo_path}</span>}
+                            {kb.has_token && <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-600 text-[8px] font-bold uppercase">Token Configured</span>}
+                          </div>
+                        )}
                         {kb.description && <p className="text-[10px] text-gray-500 line-clamp-2">{kb.description}</p>}
                       </div>
                     ))}
@@ -1241,7 +1283,7 @@ export function ProjectConfig() {
                           </div>
                         )}
                         <div className="flex flex-col gap-3 sm:flex-row">
-                          <button onClick={() => void testKbConfig()} disabled={testingKb || (editingKb.type === 'local' ? !editingKb.path : !editingKb.index_url)} className="flex-1 flex items-center justify-center gap-2 py-3 bg-white border-2 border-gray-100 text-gray-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:border-indigo-100 hover:text-indigo-600 transition-all disabled:opacity-50">
+                          <button onClick={() => void testKbConfig()} disabled={isKnowledgeBaseTestDisabled(editingKb)} className="flex-1 flex items-center justify-center gap-2 py-3 bg-white border-2 border-gray-100 text-gray-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:border-indigo-100 hover:text-indigo-600 transition-all disabled:opacity-50">
                             {testingKb ? <RefreshCw size={16} className="animate-spin" /> : <Activity size={16} />}
                             {testingKb ? llmCopy.testing : llmCopy.testModel}
                           </button>
@@ -1270,19 +1312,51 @@ export function ProjectConfig() {
                         <select value={editingKb.type} onChange={(e) => setEditingKb({ ...editingKb, type: e.target.value })} className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500">
                           <option value="local">{t('projectConfig.knowledge.types.local')}</option>
                           <option value="remote">{t('projectConfig.knowledge.types.remote')}</option>
+                          <option value="git">{t('projectConfig.knowledge.types.git')}</option>
                         </select>
                       </div>
-                      <div className="md:col-span-2 xl:col-span-3">
-                        <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">
-                          {editingKb.type === 'local' ? t('projectConfig.knowledge.placeholders.path') : t('projectConfig.knowledge.placeholders.indexUrl')}
-                        </label>
-                        <input
-                          value={editingKb.type === 'local' ? (editingKb.path || '') : (editingKb.index_url || '')}
-                          onChange={(e) => setEditingKb(editingKb.type === 'local' ? { ...editingKb, path: e.target.value } : { ...editingKb, index_url: e.target.value })}
-                          placeholder={editingKb.type === 'local' ? t('projectConfig.knowledge.placeholders.path') : t('projectConfig.knowledge.placeholders.indexUrl')}
-                          className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
+                      {editingKb.type === 'local' && (
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{t('projectConfig.knowledge.placeholders.path')}</label>
+                          <input value={editingKb.path || ''} onChange={(e) => setEditingKb({ ...editingKb, path: e.target.value })} placeholder={t('projectConfig.knowledge.placeholders.path')} className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500" />
+                        </div>
+                      )}
+                      {editingKb.type === 'remote' && (
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{t('projectConfig.knowledge.placeholders.indexUrl')}</label>
+                          <input value={editingKb.index_url || ''} onChange={(e) => setEditingKb({ ...editingKb, index_url: e.target.value })} placeholder={t('projectConfig.knowledge.placeholders.indexUrl')} className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500" />
+                        </div>
+                      )}
+                      {editingKb.type === 'git' && (
+                        <>
+                          <div className="md:col-span-2">
+                            <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{t('projectConfig.knowledge.placeholders.gitUrl')}</label>
+                            <input value={editingKb.url || ''} onChange={(e) => setEditingKb({ ...editingKb, url: e.target.value })} className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500" />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{t('projectConfig.knowledge.placeholders.branch')}</label>
+                            <input value={editingKb.branch || 'main'} onChange={(e) => setEditingKb({ ...editingKb, branch: e.target.value })} className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500" />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{t('projectConfig.knowledge.placeholders.repoPath')}</label>
+                            <input value={editingKb.repo_path || ''} onChange={(e) => setEditingKb({ ...editingKb, repo_path: e.target.value })} className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500" />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{t('projectConfig.knowledge.placeholders.username')}</label>
+                            <input value={editingKb.username || ''} onChange={(e) => setEditingKb({ ...editingKb, username: e.target.value })} className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500" />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">
+                              {editingKb.has_token ? t('projectConfig.knowledge.placeholders.tokenExisting') : t('projectConfig.knowledge.placeholders.token')}
+                            </label>
+                            <input type="password" value={editingKb.token || ''} onChange={(e) => setEditingKb({ ...editingKb, token: e.target.value })} placeholder={editingKb.has_token ? (t('common.keepCurrent') || 'Leave blank to keep current') : t('projectConfig.knowledge.placeholders.token')} className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500" />
+                          </div>
+                          <div className="md:col-span-2 xl:col-span-3">
+                            <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{t('projectConfig.knowledge.placeholders.sourceRepositoryId')}</label>
+                            <input value={editingKb.source_repository_id || ''} onChange={(e) => setEditingKb({ ...editingKb, source_repository_id: e.target.value })} className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500" />
+                          </div>
+                        </>
+                      )}
                       <div className="md:col-span-2 xl:col-span-3">
                         <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{t('projectConfig.knowledge.placeholders.includes')}</label>
                         <textarea value={(editingKb.includes || []).join('\n')} onChange={(e) => setEditingKb({ ...editingKb, includes: splitMultiline(e.target.value) })} className="min-h-14 w-full resize-none rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500" />

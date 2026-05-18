@@ -326,13 +326,21 @@
       "empty": "No knowledge bases configured yet. Click Add KB to start.",
       "types": {
         "local": "Local",
-        "remote": "Remote"
+        "remote": "Remote",
+        "git": "Git Repository"
       },
       "placeholders": {
         "id": "Config ID, for example main",
         "name": "Display name",
         "path": "Local directory path",
         "indexUrl": "Remote index URL",
+        "gitUrl": "Git repository URL",
+        "branch": "Branch, for example main",
+        "repoPath": "Document directory inside the repo, optional",
+        "username": "Username, optional",
+        "token": "Access token, optional",
+        "tokenExisting": "Access token already saved. Leave blank to keep current value.",
+        "sourceRepositoryId": "Reuse code repository config ID, optional",
         "includes": "Included files, split by line or comma"
       }
     },

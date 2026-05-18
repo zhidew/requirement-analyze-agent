@@ -20,6 +20,7 @@ class DatabaseType(str, Enum):
 class KnowledgeBaseType(str, Enum):
     LOCAL = "local"
     REMOTE = "remote"
+    GIT = "git"
 
 
 class RepositoryConfig(BaseModel):
@@ -61,6 +62,13 @@ class KnowledgeBaseConfig(BaseModel):
     type: KnowledgeBaseType
     path: Optional[str] = None
     index_url: Optional[str] = None
+    url: Optional[str] = None
+    branch: str = "main"
+    username: Optional[str] = None
+    token: Optional[str] = None
+    local_path: Optional[str] = None
+    repo_path: Optional[str] = None
+    source_repository_id: Optional[str] = None
     includes: List[str] = Field(default_factory=list)
     description: Optional[str] = None
 
@@ -70,6 +78,8 @@ class KnowledgeBaseConfig(BaseModel):
             raise ValueError("`path` is required for local knowledge bases.")
         if self.type == KnowledgeBaseType.REMOTE and not self.index_url:
             raise ValueError("`index_url` is required for remote knowledge bases.")
+        if self.type == KnowledgeBaseType.GIT and not (self.url or self.source_repository_id):
+            raise ValueError("`url` or `source_repository_id` is required for git knowledge bases.")
         return self
 
 

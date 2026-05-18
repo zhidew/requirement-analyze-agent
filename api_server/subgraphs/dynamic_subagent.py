@@ -1948,7 +1948,7 @@ def _build_asset_tool_section(tools_allowed: List[str], configured_assets: Dict[
     if configured_assets.get("databases") and _tool_is_available("query_database", tools_allowed):
         asset_lines.append("- query_database (Inspect configured database schemas or run read-only SQL)")
     if configured_assets.get("knowledge_bases") and _tool_is_available("query_knowledge_base", tools_allowed):
-        asset_lines.append("- query_knowledge_base (Search configured knowledge bases for terms, feature trees, and design docs)")
+        asset_lines.append("- query_knowledge_base (Search configured knowledge bases for terms, feature trees, and design docs; Git knowledge bases are design-document repositories and must use this tool, not clone_repository)")
 
     if not asset_lines:
         return ""
@@ -2007,7 +2007,12 @@ def _format_asset_examples(configured_assets: Dict[str, Any] | None) -> str:
     knowledge_bases = _get_configured_asset_items(configured_assets, "knowledge_bases")
     if knowledge_bases:
         kb_lines = [
-            f'  - `{item.get("id")}` ({item.get("type") or "local"}): {item.get("name") or item.get("description") or "knowledge base"}'
+            (
+                f'  - `{item.get("id")}` ({item.get("type") or "local"}'
+                f'{", branch " + str(item.get("branch")) if item.get("branch") else ""}'
+                f'{", repo_path " + str(item.get("repo_path")) if item.get("repo_path") else ""}): '
+                f'{item.get("name") or item.get("description") or "knowledge base"}'
+            )
             for item in knowledge_bases
         ]
         kb_example = knowledge_bases[0].get("id")

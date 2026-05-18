@@ -14,6 +14,7 @@ from services.git_utils import (
     default_git_username,
     git_noninteractive_env,
 )
+from services.kb_git_sync import sync_git_knowledge_base
 
 
 class TestResult:
@@ -308,6 +309,10 @@ def test_knowledge_base_connection(config: Dict[str, Any]) -> TestResult:
     kb_type = config.get("type", "local").lower()
     path = config.get("path", "").strip()
     index_url = config.get("index_url", "").strip()
+    url = config.get("url", "").strip()
+    branch = config.get("branch") or "main"
+    username = config.get("username")
+    token = config.get("token")
     
     if kb_type == "local":
         if not path:
@@ -376,6 +381,72 @@ def test_knowledge_base_connection(config: Dict[str, Any]) -> TestResult:
             if "connection" in error_msg.lower():
                 return TestResult(False, f"Cannot connect to {index_url}")
             return TestResult(False, f"Connection failed: {error_msg}")
+
+    elif kb_type == "git":
+        if not url and not config.get("source_repository_id"):
+            return TestResult(False, "Git URL or source repository is required for git knowledge base.")
+
+        if url:
+            try:
+                extra_configs = []
+                auth_header = build_git_auth_header(username, token, url)
+                if auth_header:
+                    extra_configs.append(f"http.extraHeader={auth_header}")
+                git_url = build_git_url_with_credentials(url, username, token)
+                result = subprocess.run(
+                    build_noninteractive_git_command(["ls-remote", "--heads", git_url, branch], extra_configs=extra_configs),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=git_noninteractive_env(),
+                )
+                if result.returncode != 0:
+                    error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                    lowered = error_msg.lower()
+                    if (
+                        "authentication" in lowered
+                        or "credential" in lowered
+                        or "could not read username" in lowered
+                        or "terminal prompts disabled" in lowered
+                    ):
+                        return TestResult(False, "Authentication failed. Please check username and token.")
+                    if "not found" in lowered:
+                        return TestResult(False, "Repository not found. Please check the URL.")
+                    return TestResult(False, f"Failed to connect: {error_msg}")
+                if not result.stdout.strip():
+                    return TestResult(False, f"Repository accessible but branch '{branch}' not found.")
+            except subprocess.TimeoutExpired:
+                return TestResult(False, "Connection timed out. Please check the URL and try again.")
+            except FileNotFoundError:
+                return TestResult(False, "Git is not installed or not in PATH.")
+            except Exception as e:
+                return TestResult(False, f"Error testing Git knowledge base: {str(e)}")
+
+        project_id = config.get("project_id")
+        if project_id and config.get("repo_path"):
+            try:
+                sync_result = sync_git_knowledge_base(str(project_id), config)
+                effective_root = Path(sync_result["effective_root"])
+                warnings = []
+                if not (effective_root / "feature-tree.yaml").exists():
+                    warnings.append("feature-tree.yaml not found.")
+                if not (effective_root / "terminology.yaml").exists():
+                    warnings.append("terminology.yaml not found.")
+                return TestResult(
+                    True,
+                    f"Successfully connected to Git knowledge base. Branch '{branch}' exists.",
+                    {
+                        "remote": True,
+                        "local_path": sync_result.get("local_path"),
+                        "effective_root": sync_result.get("effective_root"),
+                        "commit_hash": sync_result.get("commit_hash"),
+                        "warnings": warnings,
+                    },
+                )
+            except Exception as e:
+                return TestResult(False, f"Git repository is accessible but repo_path validation failed: {str(e)}")
+
+        return TestResult(True, f"Successfully connected to Git knowledge base. Branch '{branch}' exists.", {"remote": True})
     
     else:
         return TestResult(False, f"Unsupported knowledge base type: {kb_type}")

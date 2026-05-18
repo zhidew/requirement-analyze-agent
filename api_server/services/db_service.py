@@ -191,6 +191,13 @@ class MetadataDB:
                     type TEXT NOT NULL,
                     path TEXT,
                     index_url TEXT,
+                    url TEXT,
+                    branch TEXT NOT NULL DEFAULT 'main',
+                    username TEXT,
+                    token TEXT,
+                    local_path TEXT,
+                    repo_path TEXT,
+                    source_repository_id TEXT,
                     includes TEXT,
                     description TEXT,
                     created_at TEXT NOT NULL,
@@ -677,6 +684,13 @@ class MetadataDB:
             )
             self._ensure_column(conn, "project_model_configs", "headers", "TEXT")
             self._ensure_column(conn, "workflow_runs", "pending_interrupt_json", "TEXT")
+            self._ensure_column(conn, "knowledge_bases", "url", "TEXT")
+            self._ensure_column(conn, "knowledge_bases", "branch", "TEXT NOT NULL DEFAULT 'main'")
+            self._ensure_column(conn, "knowledge_bases", "username", "TEXT")
+            self._ensure_column(conn, "knowledge_bases", "token", "TEXT")
+            self._ensure_column(conn, "knowledge_bases", "local_path", "TEXT")
+            self._ensure_column(conn, "knowledge_bases", "repo_path", "TEXT")
+            self._ensure_column(conn, "knowledge_bases", "source_repository_id", "TEXT")
             self._migrate_legacy_project_experts(conn)
             conn.commit()
 
@@ -3126,18 +3140,32 @@ class MetadataDB:
 
     def upsert_knowledge_base(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         now = self._utcnow()
-        existing = self.get_knowledge_base(project_id, payload["id"])
+        existing = self.get_knowledge_base(project_id, payload["id"], include_secrets=True)
+        token = payload.get("token")
+        encrypted_token = (
+            self.codec.encrypt(token)
+            if token not in (None, "")
+            else (existing.get("_token_encrypted") if existing else None)
+        )
         with self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO knowledge_bases (
-                    id, project_id, name, type, path, index_url, includes, description, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, project_id, name, type, path, index_url, url, branch, username, token,
+                    local_path, repo_path, source_repository_id, includes, description, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, id) DO UPDATE SET
                     name=excluded.name,
                     type=excluded.type,
                     path=excluded.path,
                     index_url=excluded.index_url,
+                    url=excluded.url,
+                    branch=excluded.branch,
+                    username=excluded.username,
+                    token=excluded.token,
+                    local_path=excluded.local_path,
+                    repo_path=excluded.repo_path,
+                    source_repository_id=excluded.source_repository_id,
                     includes=excluded.includes,
                     description=excluded.description,
                     updated_at=excluded.updated_at
@@ -3149,30 +3177,37 @@ class MetadataDB:
                     payload["type"],
                     payload.get("path"),
                     payload.get("index_url"),
+                    payload.get("url"),
+                    payload.get("branch") or "main",
+                    payload.get("username"),
+                    encrypted_token,
+                    payload.get("local_path"),
+                    payload.get("repo_path"),
+                    payload.get("source_repository_id"),
                     self._dumps_json(payload.get("includes", [])),
                     payload.get("description"),
-                    existing.get("created_at") if existing else now,
+                    (existing.get("created_at") if existing and existing.get("created_at") else now),
                     now,
                 ),
             )
             conn.commit()
-        return self.get_knowledge_base(project_id, payload["id"])
+        return self.get_knowledge_base(project_id, payload["id"], include_secrets=False)
 
-    def list_knowledge_bases(self, project_id: str) -> List[Dict[str, Any]]:
+    def list_knowledge_bases(self, project_id: str, include_secrets: bool = False) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM knowledge_bases WHERE project_id = ? ORDER BY updated_at DESC",
                 (project_id,),
             ).fetchall()
-        return [self._row_to_knowledge_base(dict(row)) for row in rows]
+        return [self._row_to_knowledge_base(dict(row), include_secrets) for row in rows]
 
-    def get_knowledge_base(self, project_id: str, kb_id: str) -> Optional[Dict[str, Any]]:
+    def get_knowledge_base(self, project_id: str, kb_id: str, include_secrets: bool = False) -> Optional[Dict[str, Any]]:
         with self._get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM knowledge_bases WHERE project_id = ? AND id = ?",
                 (project_id, kb_id),
             ).fetchone()
-        return self._row_to_knowledge_base(dict(row)) if row else None
+        return self._row_to_knowledge_base(dict(row), include_secrets) if row else None
 
     def delete_knowledge_base(self, project_id: str, kb_id: str) -> bool:
         with self._get_connection() as conn:
@@ -3183,19 +3218,34 @@ class MetadataDB:
             conn.commit()
         return cursor.rowcount > 0
 
-    def _row_to_knowledge_base(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+    def _row_to_knowledge_base(self, row: Dict[str, Any], include_secrets: bool = False) -> Dict[str, Any]:
+        encrypted_token = row.pop("token", None)
+        result = {
             "id": row["id"],
             "project_id": row["project_id"],
             "name": row["name"],
             "type": row["type"],
             "path": row["path"],
             "index_url": row["index_url"],
+            "url": row.get("url"),
+            "branch": row.get("branch") or "main",
+            "username": row.get("username"),
+            "local_path": row.get("local_path"),
+            "repo_path": row.get("repo_path"),
+            "source_repository_id": row.get("source_repository_id"),
             "includes": self._loads_json(row["includes"], []),
             "description": row["description"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+        if include_secrets:
+            result["token"] = self.codec.decrypt(encrypted_token) if encrypted_token else None
+            result["_token_encrypted"] = encrypted_token
+        else:
+            token = self.codec.decrypt(encrypted_token) if encrypted_token else None
+            result["token"] = self.codec.mask(token)
+            result["has_token"] = bool(encrypted_token)
+        return result
 
     def upsert_project_expert(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         now = self._utcnow()

@@ -12,6 +12,7 @@ from services.kb_indexer import (
     search_terms,
     vector_search_design_docs,
 )
+from services.kb_git_sync import sync_git_knowledge_base
 
 from .clone_repository import _resolve_project_id
 
@@ -27,13 +28,14 @@ def _resolve_local_kb_root(project_id: str, kb_config: Dict[str, Any]) -> Path:
     return kb_root.resolve()
 
 
-def _load_kb(project_id: str, kb_config: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+def _load_kb(project_id: str, kb_config: Dict[str, Any]) -> Tuple[Dict[str, Any], str, Dict[str, Any]]:
     kb_type = kb_config.get("type")
     if kb_type == "local":
         kb_root = _resolve_local_kb_root(project_id, kb_config)
         return (
             load_knowledge_base(kb_root, includes=kb_config.get("includes"), kb_type="local"),
             str(kb_root),
+            {},
         )
     if kb_type == "remote":
         index_url = kb_config.get("index_url")
@@ -47,6 +49,15 @@ def _load_kb(project_id: str, kb_config: Dict[str, Any]) -> Tuple[Dict[str, Any]
                 index_url=index_url,
             ),
             str(index_url),
+            {},
+        )
+    if kb_type == "git":
+        sync_result = sync_git_knowledge_base(project_id, kb_config)
+        kb_root = Path(sync_result["effective_root"])
+        return (
+            load_knowledge_base(kb_root, includes=kb_config.get("includes"), kb_type="local"),
+            str(kb_root),
+            {"commit_hash": sync_result.get("commit_hash"), "branch": sync_result.get("branch")},
         )
     raise KnowledgeBaseError(f"Unsupported knowledge base type: {kb_type}")
 
@@ -77,7 +88,7 @@ def query_knowledge_base(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str
 
     for kb_config in kb_configs:
         try:
-            index, kb_location = _load_kb(project_id, kb_config)
+            index, kb_location, kb_metadata = _load_kb(project_id, kb_config)
             if query_type == "search_terms":
                 if not isinstance(keyword, str) or not keyword.strip():
                     raise ValueError("`keyword` is required for search_terms.")
@@ -109,6 +120,7 @@ def query_knowledge_base(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str
                     "kb_name": kb_config["name"],
                     "kb_type": kb_config.get("type"),
                     "kb_location": kb_location,
+                    **kb_metadata,
                     **payload,
                 }
             )

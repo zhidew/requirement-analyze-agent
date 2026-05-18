@@ -326,13 +326,21 @@
       "empty": "暂未配置知识库，点击「添加知识库」开始。",
       "types": {
         "local": "本地",
-        "remote": "远程"
+        "remote": "远程",
+        "git": "Git 仓库"
       },
       "placeholders": {
         "id": "配置ID，例如 main",
         "name": "显示名称",
         "path": "本地目录路径",
         "indexUrl": "远程索引地址",
+        "gitUrl": "Git 仓库 URL",
+        "branch": "分支，例如 main",
+        "repoPath": "仓内文档目录，可选",
+        "username": "用户名，可选",
+        "token": "访问令牌，可选",
+        "tokenExisting": "访问令牌已保存，留空保持当前值。",
+        "sourceRepositoryId": "复用代码仓配置 ID，可选",
         "includes": "包含文件，按行或逗号分隔"
       }
     },
