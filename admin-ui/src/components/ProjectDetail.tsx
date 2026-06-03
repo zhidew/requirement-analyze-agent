@@ -745,10 +745,12 @@ export function ProjectDetail() {
     void loadPlannerPhaseOrchestration();
   }, [id]);
 
-  const fetchLogs = async () => {
-    if (!id || !selectedVersion) return;
+  const fetchLogs = async (versionOverride?: string) => {
+    const versionToFetch = versionOverride ?? selectedVersionRef.current;
+    if (!id || !versionToFetch) return;
     try {
-      const { logs } = await api.getVersionLogs(id, selectedVersion);
+      const { logs } = await api.getVersionLogs(id, versionToFetch);
+      if (selectedVersionRef.current !== versionToFetch) return;
       setVersionLogs(logs || []);
     } catch (err) {
       console.error('Failed to fetch version logs:', err);
@@ -764,6 +766,7 @@ export function ProjectDetail() {
         api.listInteractions(id, versionToFetch),
         api.getClarifiedRequirements(id, versionToFetch),
       ]);
+      if (selectedVersionRef.current !== versionToFetch) return;
       setCurrentInteraction(current);
       setInteractionHistory(Array.isArray(listed?.items) ? listed.items : []);
       setClarifiedRequirements(clarified);
@@ -827,34 +830,37 @@ export function ProjectDetail() {
     }));
   };
 
-  const applyEventToState = (event: OrchestratorEvent) => {
+  const applyEventToState = (event: OrchestratorEvent, eventVersion: string) => {
+    if (selectedVersionRef.current !== eventVersion) {
+      return;
+    }
     setCurrentRunId(event.run_id);
     setStreamStatus('connected');
-    if (selectedVersion) {
+    if (eventVersion) {
       switch (event.event_type) {
         case 'node_started':
-          syncVersionState(selectedVersion, {
+          syncVersionState(eventVersion, {
             run_status: 'running',
             current_node: event.node_type,
             updated_at: event.timestamp,
           });
           break;
         case 'waiting_human':
-          syncVersionState(selectedVersion, {
+          syncVersionState(eventVersion, {
             run_status: 'waiting_human',
             current_node: event.node_type,
             updated_at: event.timestamp,
           });
           break;
         case 'run_completed':
-          syncVersionState(selectedVersion, {
+          syncVersionState(eventVersion, {
             run_status: 'success',
             current_node: null,
             updated_at: event.timestamp,
           });
           break;
         case 'run_failed':
-          syncVersionState(selectedVersion, {
+          syncVersionState(eventVersion, {
             run_status: 'failed',
             current_node: null,
             updated_at: event.timestamp,
@@ -962,43 +968,29 @@ export function ProjectDetail() {
     switch (event.event_type) {
       case 'node_started':
         setNodeStatuses((prev) => ({ ...prev, [event.node_type]: 'running' }));
-        if (selectedVersion) {
-          void fetchState();
-        }
+        void fetchState(eventVersion);
         break;
       case 'node_completed':
         setNodeStatuses((prev) => ({ ...prev, [event.node_type]: event.status }));
-        if (selectedVersion) {
-          void fetchState();
-        }
+        void fetchState(eventVersion);
         break;
       case 'artifact_updated':
-        if (selectedVersion) {
-          void loadArtifacts(selectedVersion);
-        }
+        void loadArtifacts(eventVersion);
         break;
       case 'artifact_governance_reviewable':
-        if (selectedVersion) {
-          void loadArtifacts(selectedVersion);
-          void fetchState();
-        }
+        void loadArtifacts(eventVersion);
+        void fetchState(eventVersion);
         break;
       case 'waiting_human':
-        if (selectedVersion) {
-          void fetchState();
-        }
+        void fetchState(eventVersion);
         break;
       case 'run_completed':
-        if (selectedVersion) {
-          void fetchState();
-        }
+        void fetchState(eventVersion);
         eventSourceRef.current?.close();
         eventSourceRef.current = null;
         break;
       case 'run_failed':
-        if (selectedVersion) {
-          void fetchState();
-        }
+        void fetchState(eventVersion);
         eventSourceRef.current?.close();
         eventSourceRef.current = null;
         break;
@@ -1016,13 +1008,18 @@ export function ProjectDetail() {
 
     eventSourceRef.current?.close();
     const source = new EventSource(api.getJobStatusSseUrl(currentRunId));
+    const sourceVersion = selectedVersion;
     eventSourceRef.current = source;
     setStreamStatus('connecting');
 
     const handleEvent = (message: MessageEvent<string>) => {
+      if (selectedVersionRef.current !== sourceVersion) {
+        source.close();
+        return;
+      }
       const event = JSON.parse(message.data) as OrchestratorEvent;
       appendEvent(event);
-      applyEventToState(event);
+      applyEventToState(event, sourceVersion);
     };
 
     const eventTypes: OrchestratorEvent['event_type'][] = [
@@ -1060,13 +1057,14 @@ export function ProjectDetail() {
     if (!id || !versionToFetch) return;
     try {
       const state = await api.getProjectState(id, versionToFetch) as WorkflowState;
-      setWorkflowState(state);
-      latestFetchedStateAtRef.current = Date.parse(state.updated_at || '') || 0;
       syncVersionState(versionToFetch, {
         run_status: state.run_status,
         current_node: state.current_node,
         updated_at: state.updated_at,
       });
+      if (selectedVersionRef.current !== versionToFetch) return;
+      setWorkflowState(state);
+      latestFetchedStateAtRef.current = Date.parse(state.updated_at || '') || 0;
       if (state.run_id) {
         setCurrentRunId(state.run_id);
       }
@@ -1093,10 +1091,11 @@ export function ProjectDetail() {
       if (state.run_status !== 'queued') {
         void loadArtifacts(versionToFetch);
       }
-      void fetchLogs();
+      void fetchLogs(versionToFetch);
       void fetchInteractionContext(versionToFetch);
 
     } catch (err: any) {
+      if (selectedVersionRef.current !== versionToFetch) return;
       if (err.response?.status === 404) {
         setWorkflowState(null);
         setCurrentInteraction(null);
@@ -1463,12 +1462,15 @@ export function ProjectDetail() {
         api.getProjectArtifacts(id, version),
         api.listDesignArtifacts(id, version),
       ]);
+      if (selectedVersionRef.current !== version) return;
       setArtifacts(data);
       setDesignArtifacts(governance.items || []);
     } catch {
+      if (selectedVersionRef.current !== version) return;
       setArtifacts({});
       setDesignArtifacts([]);
     } finally {
+      if (selectedVersionRef.current !== version) return;
       setIsArtifactsLoading(false);
     }
   };

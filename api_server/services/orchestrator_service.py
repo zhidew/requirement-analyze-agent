@@ -622,6 +622,14 @@ def _set_runtime_state(
 ):
     thread_id = _thread_id(project_id, version)
     previous = runtime_registry.get(thread_id, {})
+    existing_projection = metadata_db.get_workflow_run(project_id, version) or {}
+    resolved_pending_interrupt = None
+    if run_status == RUN_STATUS_WAITING_HUMAN:
+        resolved_pending_interrupt = (
+            pending_interrupt
+            or previous.get("pending_interrupt")
+            or existing_projection.get("pending_interrupt")
+        )
 
     # Also update persistent metadata DB
     metadata_db.upsert_version(project_id, version, previous.get("requirement", ""), run_status)
@@ -634,7 +642,7 @@ def _set_runtime_state(
         "run_status": run_status,
         "current_node": current_node,
         "waiting_reason": waiting_reason,
-        "pending_interrupt": pending_interrupt if run_status == RUN_STATUS_WAITING_HUMAN else None,
+        "pending_interrupt": resolved_pending_interrupt,
         "can_resume": (
             can_resume
             if can_resume is not None
@@ -643,7 +651,6 @@ def _set_runtime_state(
         "updated_at": _now_iso(),
     }
 
-    existing_projection = metadata_db.get_workflow_run(project_id, version) or {}
     current_phase = existing_projection.get("current_phase")
     started_at = existing_projection.get("started_at") or runtime_registry[thread_id]["updated_at"]
     finished_at = runtime_registry[thread_id]["updated_at"] if run_status in {RUN_STATUS_SUCCESS, RUN_STATUS_FAILED} else None
@@ -655,7 +662,7 @@ def _set_runtime_state(
         current_phase=current_phase,
         current_node=current_node,
         waiting_reason=waiting_reason,
-        pending_interrupt=pending_interrupt if run_status == RUN_STATUS_WAITING_HUMAN else None,
+        pending_interrupt=resolved_pending_interrupt,
         started_at=started_at,
         finished_at=finished_at,
     )
@@ -1793,6 +1800,7 @@ def _emit_waiting_human(
     *,
     interrupt_id: str | None = None,
     interaction_id: str | None = None,
+    interrupt_kind: str | None = None,
     context: dict | None = None,
 ):
     _publish_event(
@@ -1805,6 +1813,7 @@ def _emit_waiting_human(
             "node_type": node_type,
             "interrupt_id": interrupt_id,
             "interaction_id": interaction_id,
+            "interrupt_kind": interrupt_kind,
             "question": question,
             "context": context or {},
             "resume_target": resume_target,
@@ -1962,6 +1971,7 @@ def _handle_structured_graph_event(
             resume_target=pending_interrupt.get("resume_target", node_type),
             interrupt_id=pending_interrupt.get("interrupt_id"),
             interaction_id=pending_interrupt.get("interaction_id"),
+            interrupt_kind=pending_interrupt.get("interrupt_kind"),
             context=pending_interrupt.get("context") or {},
         )
 
@@ -2246,6 +2256,7 @@ async def run_orchestrator_task(
         paused_for_human = False
         pause_node = None
         pause_reason = None
+        pause_interrupt = None
         async with _graph_for_run() as design_graph:
             async for event in design_graph.astream(initial_state, config=config, stream_mode="updates"):
                 for node_name, output in event.items():
@@ -2255,6 +2266,7 @@ async def run_orchestrator_task(
                         paused_for_human = True
                         pause_node = node_name
                         pause_reason = payload.get("waiting_reason")
+                        pause_interrupt = payload.get("pending_interrupt")
                     known_artifacts = _handle_structured_graph_event(job_id, project_id, version, node_name, payload, known_artifacts)
 
         # FINAL STATE GUARD: if the graph exits with unfinished tasks, mark the run failed
@@ -2315,6 +2327,7 @@ async def run_orchestrator_task(
                 run_status=RUN_STATUS_WAITING_HUMAN,
                 current_node=pause_node,
                 waiting_reason=pause_reason,
+                pending_interrupt=pause_interrupt,
                 can_resume=True,
                 job_id=job_id,
             )
