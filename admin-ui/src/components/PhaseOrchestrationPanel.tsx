@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { apiClient } from '../api';
+import { apiClient, formatApiErrorMessage } from '../api';
 
 interface PhaseItem {
   id: string;
@@ -74,15 +74,6 @@ function isConfigurablePhase(phase: Pick<PhaseItem, 'id' | 'executable'>): boole
   return phase.executable && !FIXED_PHASES.has(phase.id);
 }
 
-function extractApiErrorDetail(error: unknown): string {
-  if (typeof error !== 'object' || error === null || !('response' in error)) {
-    return '';
-  }
-  const response = (error as { response?: { data?: { detail?: unknown } } }).response;
-  const detail = response?.data?.detail;
-  return typeof detail === 'string' ? detail : '';
-}
-
 function getDependencyRecommendationKey(code: string): string {
   switch (code) {
     case 'MISSING_PHASE_BINDING':
@@ -144,7 +135,7 @@ export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestration
     } catch (err: unknown) {
       setMessage({
         type: 'error',
-        text: extractApiErrorDetail(err) || t('management.phaseOrchestrationLoadError'),
+        text: formatApiErrorMessage(err, t('management.phaseOrchestrationLoadError'), i18n.language),
       });
     } finally {
       setLoading(false);
@@ -321,7 +312,7 @@ export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestration
     } catch (err: unknown) {
       setMessage({
         type: 'error',
-        text: extractApiErrorDetail(err) || t('management.phaseOrchestrationSaveError'),
+        text: formatApiErrorMessage(err, t('management.phaseOrchestrationSaveError'), i18n.language),
       });
     } finally {
       setSaving(false);
@@ -344,7 +335,7 @@ export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestration
       if (!silent) {
         setMessage({
           type: 'error',
-          text: extractApiErrorDetail(err) || t('management.validationLoadError'),
+          text: formatApiErrorMessage(err, t('management.validationLoadError'), i18n.language),
         });
       }
     } finally {

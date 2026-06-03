@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -16,10 +17,19 @@ EMBEDDING_DIM = 64
 BM25_K1 = 1.2
 BM25_B = 0.75
 REMOTE_TIMEOUT_SECONDS = 15
+DEFAULT_MAX_INDEX_FILES = 500
+DEFAULT_MAX_FILE_BYTES = 1024 * 1024
 
 
 class KnowledgeBaseError(RuntimeError):
     pass
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
 
 
 def _load_yaml_file(path: Path):
@@ -301,6 +311,9 @@ def load_knowledge_base(
     feature_tree_path = next((path for path in include_paths if "feature-tree" in path.name), root_path / "feature-tree.yaml")
 
     design_docs: List[Path] = []
+    warnings: List[str] = []
+    max_files = _env_int("KB_MAX_INDEX_FILES", DEFAULT_MAX_INDEX_FILES)
+    max_file_bytes = _env_int("KB_MAX_FILE_BYTES", DEFAULT_MAX_FILE_BYTES)
     for path in root_path.rglob("*"):
         if not path.is_file():
             continue
@@ -308,6 +321,17 @@ def load_knowledge_base(
             continue
         if path.name in {terminology_path.name, feature_tree_path.name}:
             continue
+        try:
+            size_bytes = path.stat().st_size
+        except OSError:
+            warnings.append(f"Skipped unreadable knowledge base file: {path.name}")
+            continue
+        if size_bytes > max_file_bytes:
+            warnings.append(f"Skipped oversized knowledge base file: {path.name} ({size_bytes} bytes).")
+            continue
+        if len(design_docs) >= max_files:
+            warnings.append(f"Knowledge base indexing stopped after {max_files} files.")
+            break
         design_docs.append(path)
 
     return {
@@ -317,6 +341,11 @@ def load_knowledge_base(
         "feature_tree": _load_yaml_file(feature_tree_path) if feature_tree_path.exists() else {},
         "design_docs": design_docs,
         "doc_chunks": _build_local_doc_chunks(root_path, design_docs),
+        "warnings": warnings,
+        "limits": {
+            "max_index_files": max_files,
+            "max_file_bytes": max_file_bytes,
+        },
         "embedding_model": f"hashing-{EMBEDDING_DIM}d-v1",
     }
 

@@ -118,6 +118,7 @@
     "gatekeeper": "Gatekeeper",
     "clearFiles": "Clear Files",
     "inputMaterials": "Input Materials",
+    "uploadFormatHint": "Supported files: .md, .txt, .json, .yaml, .yml",
     "orInputText": "Or input RR text",
     "resumeExecution": "Resume Execution",
     "subagentReasoning": "Subagent Reasoning",
@@ -293,7 +294,7 @@
         "url": "Repository URL",
         "branch": "Branch, default main",
         "username": "Username, optional",
-        "token": "Access token, optional",
+        "token": "Access token",
         "tokenExisting": "Token already saved. Leave blank to keep current value.",
         "localPath": "Local path, optional"
       }
@@ -311,8 +312,8 @@
         "port": "Port",
         "host": "Host or SQLite base path",
         "database": "Database name or SQLite file name",
-        "username": "Username, optional",
-        "password": "Password, optional",
+        "username": "Username",
+        "password": "Password",
         "passwordExisting": "Password already saved. Leave blank to keep current value.",
         "schemaFilter": "Schema filters, split by line or comma"
       }

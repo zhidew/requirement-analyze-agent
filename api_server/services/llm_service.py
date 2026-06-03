@@ -54,6 +54,20 @@ def _get_llm_request_timeout_seconds() -> float:
     return _resolve_nonnegative_float_env("LLM_REQUEST_TIMEOUT_SECONDS", 600.0)
 
 
+def _get_llm_connectivity_timeout_seconds() -> float:
+    return _resolve_nonnegative_float_env("LLM_CONNECTIVITY_TIMEOUT_SECONDS", 15.0)
+
+
+def _get_llm_connectivity_max_tokens() -> int:
+    raw_value = os.getenv("LLM_CONNECTIVITY_MAX_TOKENS")
+    if raw_value in (None, ""):
+        return 32
+    try:
+        return max(1, int(raw_value))
+    except (TypeError, ValueError):
+        return 32
+
+
 def _format_timeout_seconds(timeout_seconds: float) -> str:
     if timeout_seconds <= 0:
         return "disabled"
@@ -404,26 +418,66 @@ def test_llm_connectivity(llm_settings: dict) -> dict:
     Returns a dict with success status and message.
     """
     try:
+        started_at = time.monotonic()
         system_prompt, user_prompt = _build_connectivity_probe_prompts()
         normalized_settings = _normalize_connectivity_llm_settings(llm_settings)
-        res_dict = _call_openai_raw(system_prompt, user_prompt, llm_settings=normalized_settings)
+        timeout_seconds = _get_llm_connectivity_timeout_seconds()
+        res_dict = _call_openai_raw(
+            system_prompt,
+            user_prompt,
+            llm_settings=normalized_settings,
+            timeout_seconds=timeout_seconds,
+            max_tokens=_get_llm_connectivity_max_tokens(),
+        )
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
 
         if isinstance(res_dict, dict):
             return {
                 "success": True,
                 "message": "Connected successfully to OpenAI-compatible API.",
+                "error_type": None,
+                "elapsed_ms": elapsed_ms,
+                "timeout_seconds": timeout_seconds,
             }
-        return {"success": False, "message": f"Invalid response format: {type(res_dict).__name__}"}
+        return {
+            "success": False,
+            "message": f"Invalid response format: {type(res_dict).__name__}",
+            "error_type": "invalid_response",
+            "elapsed_ms": elapsed_ms,
+            "timeout_seconds": timeout_seconds,
+        }
     except Exception as e:
-        return {"success": False, "message": str(e)}
+        return {
+            "success": False,
+            "message": str(e),
+            "error_type": _classify_llm_connectivity_error(e),
+            "timeout_seconds": _get_llm_connectivity_timeout_seconds(),
+        }
 
-def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | None = None) -> dict:
+def _classify_llm_connectivity_error(exc: Exception) -> str:
+    text = str(exc).lower()
+    if "timeout" in text or "timed out" in text:
+        return "llm_timeout"
+    if "401" in text or "unauthorized" in text or "authentication" in text or "api key" in text:
+        return "llm_auth_failed"
+    if "404" in text or "model" in text and "not" in text:
+        return "llm_invalid_model"
+    return "connectivity_failed"
+
+
+def _call_openai_raw(
+    system_prompt: str,
+    user_prompt: str,
+    llm_settings: dict | None = None,
+    timeout_seconds: float | None = None,
+    max_tokens: int | None = None,
+) -> dict:
     from openai import OpenAI
     api_key = _resolve_llm_setting(llm_settings, "openai_api_key", "OPENAI_API_KEY")
     base_url = _resolve_llm_setting(llm_settings, "openai_base_url", "OPENAI_BASE_URL", "https://api.openai.com/v1")
     model_name = _resolve_llm_setting(llm_settings, "openai_model_name", "OPENAI_MODEL_NAME", "gpt-4o")
     headers = _resolve_llm_dict_setting(llm_settings, "openai_headers")
-    timeout_seconds = _get_llm_request_timeout_seconds()
+    effective_timeout_seconds = _get_llm_request_timeout_seconds() if timeout_seconds is None else max(0.0, float(timeout_seconds))
     
     # Use placeholder if key is missing to support local/no-auth gateways
     # Check if Auth header is already present
@@ -437,24 +491,28 @@ def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
         "base_url": base_url,
         "default_headers": headers or None,
     }
-    if timeout_seconds > 0:
-        client_kwargs["timeout"] = timeout_seconds
+    if effective_timeout_seconds > 0:
+        client_kwargs["timeout"] = effective_timeout_seconds
 
     client = OpenAI(**client_kwargs)
     _throttle_llm_request()
     started_at = time.monotonic()
     print(
         f"[LLM Service] OpenAI-compatible request starting model='{model_name}' "
-        f"base_url='{_sanitize_base_url(base_url)}' timeout={_format_timeout_seconds(timeout_seconds)}."
+        f"base_url='{_sanitize_base_url(base_url)}' timeout={_format_timeout_seconds(effective_timeout_seconds)}."
     )
-    completion = client.chat.completions.create(
-        model=model_name,
-        messages=[
+    completion_kwargs = {
+        "model": model_name,
+        "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt},
         ],
-        response_format={"type": "json_object"}
-    )
+        "response_format": {"type": "json_object"},
+    }
+    if max_tokens is not None:
+        completion_kwargs["max_tokens"] = max(1, int(max_tokens))
+
+    completion = client.chat.completions.create(**completion_kwargs)
     elapsed = time.monotonic() - started_at
     print(
         f"[LLM Service] OpenAI-compatible request completed model='{model_name}' "

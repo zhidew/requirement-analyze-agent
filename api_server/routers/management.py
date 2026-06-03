@@ -65,6 +65,12 @@ class PhaseOrchestrationUpdateRequest(BaseModel):
     phases: List[PhaseOrchestrationItemRequest]
 
 
+def _assert_no_active_run_for_global_config():
+    conflict = orch.active_run_conflict_detail()
+    if conflict:
+        raise HTTPException(status_code=409, detail=conflict)
+
+
 @management_router.get("/agents")
 async def list_agents():
     return orch.list_agents()
@@ -80,6 +86,7 @@ async def get_agent(agent_id: str):
 
 @management_router.post("/agents/{agent_id}")
 async def update_agent(agent_id: str, req: AgentUpdateRequest):
+    _assert_no_active_run_for_global_config()
     success = orch.update_agent(agent_id, req.config_yaml)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to update agent")
@@ -101,6 +108,7 @@ async def get_template(skill_id: str, template_name: str):
 
 @management_router.post("/skills/{skill_id}/templates/{template_name}")
 async def update_template(skill_id: str, template_name: str, req: TemplateUpdateRequest):
+    _assert_no_active_run_for_global_config()
     success = orch.update_template(skill_id, template_name, req.content)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update template")
@@ -128,6 +136,7 @@ async def get_phase_orchestration():
 
 @expert_center_router.put("/phase-orchestration", response_model=PhaseOrchestrationResponse)
 async def update_phase_orchestration(req: PhaseOrchestrationUpdateRequest):
+    _assert_no_active_run_for_global_config()
     try:
         return orch.update_phase_orchestration([item.model_dump() for item in req.phases])
     except ValueError as exc:
@@ -141,6 +150,7 @@ async def validate_expert_dependencies():
 
 @expert_center_router.post("/experts", response_model=ExpertMetadata)
 async def create_expert(req: ExpertCreateRequest):
+    _assert_no_active_run_for_global_config()
     request_id = uuid4().hex[:8]
 
     # Validate names for duplicates / similarity
@@ -224,6 +234,7 @@ async def get_expert(expert_id: str):
 
 @expert_center_router.put("/experts/{expert_id}")
 async def update_expert(expert_id: str, req: ExpertUpdateRequest):
+    _assert_no_active_run_for_global_config()
     success = orch.update_expert(expert_id, req.profile_yaml)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to update expert profile")
@@ -232,6 +243,7 @@ async def update_expert(expert_id: str, req: ExpertUpdateRequest):
 
 @expert_center_router.delete("/experts/{expert_id}")
 async def delete_expert(expert_id: str):
+    _assert_no_active_run_for_global_config()
     success = orch.delete_expert(expert_id)
     if not success:
         raise HTTPException(status_code=404, detail="Expert not found")
@@ -253,6 +265,7 @@ async def get_file_content(path: str):
 
 @expert_center_router.put("/files/{path:path}/content")
 async def update_file_content(path: str, req: FileContentUpdateRequest):
+    _assert_no_active_run_for_global_config()
     success = orch.update_file_content(path, req.content)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to update file content")
@@ -266,6 +279,7 @@ async def delete_file(path: str):
     Only allows deleting files in templates, references, and scripts directories.
     Profile and SKILL.md files cannot be deleted.
     """
+    _assert_no_active_run_for_global_config()
     success = orch.delete_file(path)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to delete file. File may be protected or not found.")
@@ -281,6 +295,7 @@ async def reload_experts():
     2. Call POST /api/v1/expert-center/reload
     3. New expert is automatically available in the workflow
     """
+    _assert_no_active_run_for_global_config()
     try:
         registry = ExpertRegistry.get_instance()
         registry.reload()

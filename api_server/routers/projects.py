@@ -1,5 +1,7 @@
+import asyncio
+import os
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
-import shutil
 from typing import List
 from models.project import (
     ArtifactAcceptRequest,
@@ -35,11 +37,44 @@ from services import context_consistency_service
 from services import decision_log_service
 from services import artifact_dependency_service
 from services import impact_analysis_service
+from services.upload_guard import UploadValidationError, record_baseline_upload_event, save_baseline_uploads
 
 router = APIRouter(
     prefix="/api/v1/projects",
     tags=["Projects"],
 )
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+_BASELINE_UPLOAD_MAX_CONCURRENCY = _env_int("BASELINE_UPLOAD_MAX_CONCURRENCY", 4)
+_BASELINE_UPLOAD_PROJECT_MAX_CONCURRENCY = _env_int("BASELINE_UPLOAD_PROJECT_MAX_CONCURRENCY", 1)
+_BASELINE_UPLOAD_SEMAPHORE = asyncio.Semaphore(_BASELINE_UPLOAD_MAX_CONCURRENCY)
+_BASELINE_UPLOAD_PROJECT_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
+
+
+async def _try_acquire(semaphore: asyncio.Semaphore) -> bool:
+    if semaphore.locked():
+        return False
+    try:
+        await asyncio.wait_for(semaphore.acquire(), timeout=0.001)
+        return True
+    except asyncio.TimeoutError:
+        return False
+
+
+def _project_upload_semaphore(project_id: str) -> asyncio.Semaphore:
+    semaphore = _BASELINE_UPLOAD_PROJECT_SEMAPHORES.get(project_id)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(_BASELINE_UPLOAD_PROJECT_MAX_CONCURRENCY)
+        _BASELINE_UPLOAD_PROJECT_SEMAPHORES[project_id] = semaphore
+    return semaphore
+
 
 @router.post("/{project_id}/versions/{version}/upload")
 async def upload_baseline_files(
@@ -50,16 +85,58 @@ async def upload_baseline_files(
     """上传基线输入文件（需求、模型、字典等）"""
     project_path = orch.PROJECTS_DIR / project_id / version
     baseline_dir = project_path / "baseline"
-    baseline_dir.mkdir(parents=True, exist_ok=True)
-    
-    saved_files = []
-    for file in files:
-        file_path = baseline_dir / file.filename
-        with file_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        saved_files.append(file.filename)
-        
-    return {"status": "success", "files": saved_files}
+    if not await _try_acquire(_BASELINE_UPLOAD_SEMAPHORE):
+        detail = {
+            "message": "Baseline uploads are busy. Please retry later.",
+            "error_type": "rate_limited",
+            "max_concurrency": _BASELINE_UPLOAD_MAX_CONCURRENCY,
+        }
+        record_baseline_upload_event(baseline_dir, "upload_failed", files=files, detail=detail)
+        raise HTTPException(status_code=503, detail=detail)
+
+    project_semaphore = _project_upload_semaphore(project_id)
+    project_acquired = False
+    try:
+        project_acquired = await _try_acquire(project_semaphore)
+        if not project_acquired:
+            detail = {
+                "message": "This project already has an active baseline upload. Please retry later.",
+                "error_type": "rate_limited",
+                "max_concurrency": _BASELINE_UPLOAD_PROJECT_MAX_CONCURRENCY,
+            }
+            record_baseline_upload_event(baseline_dir, "upload_failed", files=files, detail=detail)
+            raise HTTPException(status_code=503, detail=detail)
+
+        result = await save_baseline_uploads(baseline_dir, files)
+        record_baseline_upload_event(
+            baseline_dir,
+            "upload_succeeded",
+            files=files,
+            detail={"saved_files": result.get("files", []), "file_count": len(result.get("files", []))},
+        )
+        return result
+    except UploadValidationError as exc:
+        record_baseline_upload_event(
+            baseline_dir,
+            "upload_failed",
+            files=files,
+            detail={"status_code": exc.status_code, **exc.detail},
+        )
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        record_baseline_upload_event(
+            baseline_dir,
+            "upload_failed",
+            files=files,
+            detail={"status_code": 500, "error_type": "internal_error", "message": "Baseline upload failed."},
+        )
+        raise
+    finally:
+        if project_acquired:
+            project_semaphore.release()
+        _BASELINE_UPLOAD_SEMAPHORE.release()
 
 @router.get("", response_model=List[ProjectResponse])
 async def get_projects():
@@ -98,13 +175,19 @@ async def delete_project_version(project_id: str, version: str):
 
 @router.post("/{project_id}/versions/{version}/run", response_model=JobResponse)
 async def run_design_orchestrator(project_id: str, version: str, req: VersionRunRequest):
-    job_id = orch.trigger_orchestrator(
+    run_result = orch.trigger_orchestrator(
         project_id,
         version,
         req.requirement_text,
         req.model,
     )
-    return {"job_id": job_id, "status": "queued", "message": "Orchestrator job queued."}
+    reused = bool(run_result.get("reused_existing_job"))
+    return {
+        "job_id": run_result["job_id"],
+        "status": run_result.get("status") or "queued",
+        "message": "Existing orchestrator job reused." if reused else "Orchestrator job queued.",
+        "reused_existing_job": reused,
+    }
 
 
 @router.post("/{project_id}/versions/{version}/schedule-run", response_model=ScheduleRunResponse)

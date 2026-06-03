@@ -118,6 +118,7 @@
     "gatekeeper": "门禁",
     "clearFiles": "清空文件",
     "inputMaterials": "输入材料",
+    "uploadFormatHint": "支持格式：.md、.txt、.json、.yaml、.yml",
     "orInputText": "或输入RR文本",
     "resumeExecution": "恢复执行",
     "subagentReasoning": "专家推理",
@@ -293,7 +294,7 @@
         "url": "仓库地址",
         "branch": "分支，默认 main",
         "username": "用户名，可选",
-        "token": "访问令牌，可选",
+        "token": "访问令牌",
         "tokenExisting": "令牌已保存，留空保持当前值。",
         "localPath": "本地路径，可选"
       }
@@ -311,8 +312,8 @@
         "port": "端口",
         "host": "主机或 SQLite 基础路径",
         "database": "数据库名或 SQLite 文件名",
-        "username": "用户名，可选",
-        "password": "密码，可选",
+        "username": "用户名",
+        "password": "密码",
         "passwordExisting": "密码已保存，留空保持当前值。",
         "schemaFilter": "模式过滤，按行或逗号分隔"
       }

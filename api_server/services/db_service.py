@@ -3,6 +3,8 @@ import datetime
 import json
 import os
 import sqlite3
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -89,6 +91,7 @@ class MetadataDB:
         key_path = KEY_PATH if db_path is None else self.db_dir / "metadata.key"
         self.codec = SensitiveValueCodec(key_path)
         self.db_dir.mkdir(parents=True, exist_ok=True)
+        self._write_lock = threading.RLock()
         self._init_db()
         self.synced = False
 
@@ -96,6 +99,13 @@ class MetadataDB:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        if os.getenv("SQLITE_ENABLE_WAL", "true").lower() not in {"0", "false", "no"}:
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA synchronous = NORMAL")
+            except sqlite3.DatabaseError as exc:
+                print(f"[MetadataDB] Warning: failed to enable SQLite WAL mode: {exc}")
         return conn
 
     @staticmethod
@@ -114,8 +124,19 @@ class MetadataDB:
             return default
         return json.loads(value)
 
+    @contextmanager
+    def _transaction(self):
+        with self._write_lock:
+            with self._get_connection() as conn:
+                try:
+                    yield conn
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+
     def _init_db(self):
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS projects (
@@ -692,7 +713,6 @@ class MetadataDB:
             self._ensure_column(conn, "knowledge_bases", "repo_path", "TEXT")
             self._ensure_column(conn, "knowledge_bases", "source_repository_id", "TEXT")
             self._migrate_legacy_project_experts(conn)
-            conn.commit()
 
     @staticmethod
     def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str):
@@ -876,7 +896,7 @@ class MetadataDB:
 
     def upsert_project(self, project_id: str, name: str, description: Optional[str] = None):
         now = self._utcnow()
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO projects (id, name, description, created_at, updated_at)
@@ -888,7 +908,6 @@ class MetadataDB:
                 """,
                 (project_id, name, description, now, now),
             )
-            conn.commit()
 
     def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
         with self._get_connection() as conn:
@@ -964,13 +983,12 @@ class MetadataDB:
         return projects
 
     def delete_project(self, project_id: str):
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-            conn.commit()
 
     def upsert_version(self, project_id: str, version_id: str, requirement: str, run_status: str):
         now = self._utcnow()
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO versions (version_id, project_id, requirement, run_status, created_at, updated_at)
@@ -981,7 +999,6 @@ class MetadataDB:
                 """,
                 (version_id, project_id, requirement, run_status, now, now),
             )
-            conn.commit()
 
     def upsert_workflow_run(
         self,
@@ -1003,7 +1020,7 @@ class MetadataDB:
             effective_pending_interrupt = existing.get("pending_interrupt") if existing else None
         else:
             effective_pending_interrupt = pending_interrupt
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO workflow_runs (
@@ -1036,7 +1053,6 @@ class MetadataDB:
                     now,
                 ),
             )
-            conn.commit()
         return self.get_workflow_run(project_id, version_id) or {}
 
     def get_workflow_run(self, project_id: str, version_id: str) -> Optional[Dict[str, Any]]:
@@ -1066,7 +1082,7 @@ class MetadataDB:
         triggered_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         now = self._utcnow()
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO scheduled_runs (
@@ -1090,7 +1106,6 @@ class MetadataDB:
                     now,
                 ),
             )
-            conn.commit()
         return self.get_scheduled_run(schedule_id) or {}
 
     def update_scheduled_run(
@@ -1106,7 +1121,7 @@ class MetadataDB:
         if not existing:
             return None
 
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 UPDATE scheduled_runs
@@ -1122,7 +1137,6 @@ class MetadataDB:
                     schedule_id,
                 ),
             )
-            conn.commit()
         return self.get_scheduled_run(schedule_id)
 
     def get_scheduled_run(self, schedule_id: str) -> Optional[Dict[str, Any]]:
@@ -1195,9 +1209,8 @@ class MetadataDB:
             placeholders = ", ".join("?" for _ in statuses)
             query += f" AND status IN ({placeholders})"
             params.extend(statuses)
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             cursor = conn.execute(query, params)
-            conn.commit()
         return cursor.rowcount
 
     @staticmethod
@@ -1255,7 +1268,7 @@ class MetadataDB:
             or (existing.get("finished_at") if existing and resolved_status in {"success", "failed", "skipped", "cancelled"} else None)
             or (now if resolved_status in {"success", "failed", "skipped", "cancelled"} else None)
         )
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO workflow_tasks (
@@ -1293,7 +1306,6 @@ class MetadataDB:
                     now,
                 ),
             )
-            conn.commit()
         return self.get_workflow_task(project_id, version_id, node_type) or {}
 
     def get_workflow_task(self, project_id: str, version_id: str, node_type: str) -> Optional[Dict[str, Any]]:
@@ -1328,7 +1340,7 @@ class MetadataDB:
         tasks: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         now = self._utcnow()
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 "DELETE FROM workflow_tasks WHERE project_id = ? AND version_id = ?",
                 (project_id, version_id),
@@ -1362,7 +1374,6 @@ class MetadataDB:
                         now,
                     ),
                 )
-            conn.commit()
         return self.list_workflow_tasks(project_id, version_id)
 
     def append_workflow_task_event(
@@ -1379,7 +1390,7 @@ class MetadataDB:
         payload: Optional[Dict[str, Any]] = None,
         created_at: Optional[str] = None,
     ) -> None:
-        with self._get_connection() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO workflow_task_events (
@@ -1588,7 +1599,6 @@ class MetadataDB:
                     created_at or self._utcnow(),
                 ),
             )
-            conn.commit()
 
     def list_human_interaction_events(self, interaction_id: str) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:

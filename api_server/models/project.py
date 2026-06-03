@@ -39,6 +39,7 @@ class JobResponse(BaseModel):
     job_id: str
     status: str
     message: str
+    reused_existing_job: bool = False
 
 
 class ScheduleRunResponse(BaseModel):

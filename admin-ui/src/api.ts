@@ -1,10 +1,68 @@
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1';
+export const BASELINE_UPLOAD_ACCEPT = '.md,.txt,.json,.yaml,.yml';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
 });
+
+interface ActiveRunSummary {
+  project_id?: string;
+  version?: string;
+  job_id?: string | null;
+  status?: string;
+}
+
+function getApiErrorDetail(error: unknown): unknown {
+  if (!axios.isAxiosError(error)) {
+    return undefined;
+  }
+  return error.response?.data?.detail;
+}
+
+export function extractApiErrorDetail(error: unknown): string {
+  const detail = getApiErrorDetail(error);
+  if (typeof detail === 'string') {
+    return detail;
+  }
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    const message = (detail as { message?: unknown }).message;
+    return typeof message === 'string' ? message : '';
+  }
+  return axios.isAxiosError(error) ? error.message : '';
+}
+
+export function formatApiErrorMessage(error: unknown, fallback = '', locale = 'en'): string {
+  const detail = getApiErrorDetail(error);
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    const activeRuns = (detail as { active_runs?: unknown }).active_runs;
+    if (Array.isArray(activeRuns) && activeRuns.length > 0) {
+      const isZh = locale.toLowerCase().startsWith('zh');
+      const visibleRuns = (activeRuns as ActiveRunSummary[]).slice(0, 3);
+      const runText = visibleRuns
+        .map((run) => {
+          const scope = [run.project_id, run.version].filter(Boolean).join('/');
+          const meta = [run.status, run.job_id ? `job ${run.job_id}` : ''].filter(Boolean).join(', ');
+          return meta ? `${scope || '-'} (${meta})` : (scope || '-');
+        })
+        .join('; ');
+      const extraCount = activeRuns.length - visibleRuns.length;
+      const extraText = extraCount > 0
+        ? (isZh ? `，另有 ${extraCount} 个运行中任务` : `; plus ${extraCount} more active run${extraCount > 1 ? 's' : ''}`)
+        : '';
+      return isZh
+        ? `当前存在运行中的工作流，暂不能修改配置。运行中：${runText}${extraText}。`
+        : `Configuration cannot be changed while a workflow run is active. Active: ${runText}${extraText}.`;
+    }
+  }
+
+  const detailText = extractApiErrorDetail(error);
+  if (detailText && detailText !== (axios.isAxiosError(error) ? error.message : '')) {
+    return detailText;
+  }
+  return fallback || detailText;
+}
 
 export interface ModelConfig {
   id: string;

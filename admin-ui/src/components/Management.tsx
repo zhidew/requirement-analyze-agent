@@ -16,7 +16,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import { apiClient } from '../api';
+import { apiClient, extractApiErrorDetail, formatApiErrorMessage } from '../api';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { PhaseOrchestrationPanel } from './PhaseOrchestrationPanel';
@@ -95,15 +95,6 @@ function pickDefaultCreatePhase(phases: PhaseOption[]): string {
     return DEFAULT_CREATE_PHASE;
   }
   return phases.find((phase) => phase.id === DEFAULT_CREATE_PHASE)?.id || phases[0].id;
-}
-
-function extractApiErrorDetail(error: unknown): string {
-  if (typeof error !== 'object' || error === null || !('response' in error)) {
-    return '';
-  }
-  const response = (error as { response?: { data?: { detail?: unknown } } }).response;
-  const detail = response?.data?.detail;
-  return typeof detail === 'string' ? detail : '';
 }
 
 export function ExpertCenter() {
@@ -461,8 +452,8 @@ export function ExpertCenter() {
       setMessage({ type: 'success', text: t('management.saveSuccess') });
       await selectFile(selectedFile.path);
       await loadExpertCenter();
-    } catch {
-      setMessage({ type: 'error', text: t('common.error') });
+    } catch (err: unknown) {
+      setMessage({ type: 'error', text: formatApiErrorMessage(err, t('common.error'), i18n.language) });
     } finally {
       setSaving(false);
     }
@@ -503,7 +494,7 @@ export function ExpertCenter() {
       const detail = extractApiErrorDetail(err);
       const errMsg = detail.includes('duplicate') || detail.includes('similar')
         ? t('management.createExpertNameDuplicate')
-        : (detail || t('management.createExpertError'));
+        : formatApiErrorMessage(err, t('management.createExpertError'), i18n.language);
       setMessage({ type: 'error', text: errMsg });
     } finally {
       setCreating(false);
@@ -529,8 +520,8 @@ export function ExpertCenter() {
       setSelectedFile(null);
       setEditingContent('');
       await loadExpertCenter();
-    } catch {
-      setMessage({ type: 'error', text: t('management.deleteExpertError') });
+    } catch (err: unknown) {
+      setMessage({ type: 'error', text: formatApiErrorMessage(err, t('management.deleteExpertError'), i18n.language) });
     } finally {
       setDeleting(false);
     }
@@ -566,7 +557,7 @@ export function ExpertCenter() {
       // Select the new file
       setTimeout(() => void selectFile(newPath), 100);
     } catch (err: unknown) {
-      const errMsg = extractApiErrorDetail(err) || 'Failed to create file';
+      const errMsg = formatApiErrorMessage(err, 'Failed to create file', i18n.language);
       setMessage({ type: 'error', text: errMsg });
     } finally {
       setCreatingFile(false);
@@ -591,7 +582,7 @@ export function ExpertCenter() {
       }
       await loadExpertCenter();
     } catch (err: unknown) {
-      const errMsg = extractApiErrorDetail(err) || 'Failed to delete file';
+      const errMsg = formatApiErrorMessage(err, 'Failed to delete file', i18n.language);
       setMessage({ type: 'error', text: errMsg });
     } finally {
       setDeletingFile(false);

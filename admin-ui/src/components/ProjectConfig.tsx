@@ -1,8 +1,8 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link, useLocation, useParams } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Bot, Cpu, Database, FolderGit2, Plus, RefreshCw, Save, Settings2, Trash2, Activity, CheckCircle, XCircle, AlertTriangle, FileText, HardDrive } from 'lucide-react';
+import { ArrowLeft, BookOpen, Bot, Cpu, Database, FolderGit2, Plus, RefreshCw, Save, Settings2, Trash2, Activity, CheckCircle, XCircle, AlertTriangle, FileText, HardDrive, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { api, type DebugConfig } from '../api';
+import { api, formatApiErrorMessage, type DebugConfig } from '../api';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
 type TabKey = 'repositories' | 'databases' | 'knowledge' | 'experts' | 'llm' | 'danger';
@@ -191,16 +191,6 @@ function parseHeadersJson(value?: string): Record<string, string> | undefined {
   );
 }
 
-function extractApiErrorDetail(error: unknown): string {
-  if (typeof error !== 'object' || error === null || !('response' in error)) {
-    return '';
-  }
-
-  const response = (error as { response?: { data?: { detail?: unknown } } }).response;
-  const detail = response?.data?.detail;
-  return typeof detail === 'string' ? detail : '';
-}
-
 function normalizeModelPayload(model: ModelConfig) {
   return {
     ...model,
@@ -229,8 +219,8 @@ function ConfigEditorModal({ title, icon, onClose, children, footer }: ConfigEdi
             {icon}
             {title}
           </h3>
-          <button onClick={onClose} className="rounded-lg p-2 text-gray-400 transition-all hover:bg-gray-100 hover:text-gray-600">
-            <Trash2 size={16} />
+          <button onClick={onClose} title="Close" aria-label="Close" className="rounded-lg p-2 text-gray-400 transition-all hover:bg-gray-100 hover:text-gray-600">
+            <X size={16} />
           </button>
         </div>
         <div className="overflow-y-auto px-4 py-4 sm:px-5">
@@ -304,8 +294,8 @@ export function ProjectConfig() {
     try {
       const res = await api.testProjectModel(projectId, normalizeModelPayload(editingModel));
       setTestResult(res);
-    } catch (err: any) {
-      setTestResult({ success: false, message: err.response?.data?.detail || err.message });
+    } catch (err: unknown) {
+      setTestResult({ success: false, message: formatApiErrorMessage(err, t('common.error'), i18n.language) });
     } finally {
       setTestingModel(false);
     }
@@ -321,8 +311,8 @@ export function ProjectConfig() {
         token: editingRepo.token?.trim() || undefined,
       });
       setTestResult(res);
-    } catch (err: any) {
-      setTestResult({ success: false, message: err.response?.data?.detail || err.message });
+    } catch (err: unknown) {
+      setTestResult({ success: false, message: formatApiErrorMessage(err, t('common.error'), i18n.language) });
     } finally {
       setTestingRepo(false);
     }
@@ -338,8 +328,8 @@ export function ProjectConfig() {
         password: editingDb.password?.trim() || undefined,
       });
       setTestResult(res);
-    } catch (err: any) {
-      setTestResult({ success: false, message: err.response?.data?.detail || err.message });
+    } catch (err: unknown) {
+      setTestResult({ success: false, message: formatApiErrorMessage(err, t('common.error'), i18n.language) });
     } finally {
       setTestingDb(false);
     }
@@ -355,8 +345,8 @@ export function ProjectConfig() {
         token: editingKb.token?.trim() || undefined,
       });
       setTestResult(res);
-    } catch (err: any) {
-      setTestResult({ success: false, message: err.response?.data?.detail || err.message });
+    } catch (err: unknown) {
+      setTestResult({ success: false, message: formatApiErrorMessage(err, t('common.error'), i18n.language) });
     } finally {
       setTestingKb(false);
     }
@@ -587,8 +577,8 @@ export function ProjectConfig() {
       await api.deleteProject(projectId);
       setIsDeleteModalOpen(false);
       navigate('/');
-    } catch (err: any) {
-      setDeleteError(err.response?.data?.detail || dangerCopy.deleteError);
+    } catch (err: unknown) {
+      setDeleteError(formatApiErrorMessage(err, dangerCopy.deleteError, i18n.language));
     } finally {
       setDeleting(false);
     }
@@ -610,10 +600,10 @@ export function ProjectConfig() {
       await loadAll();
       setEditingRepo(prev => prev ? { ...prev, token: '', has_token: true } : null);
       setTimeout(() => setIsSaved(false), 3000);
-    } catch (error: any) {
+    } catch (error: unknown) {
       setSaving(false);
       setIsSaved(false);
-      setTestResult({ success: false, message: error?.message || 'Failed to save repository.' });
+      setTestResult({ success: false, message: formatApiErrorMessage(error, 'Failed to save repository.', i18n.language) });
     }
   };
 
@@ -633,10 +623,10 @@ export function ProjectConfig() {
       await loadAll();
       setEditingDb(prev => prev ? { ...prev, password: '', has_password: true } : null);
       setTimeout(() => setIsSaved(false), 3000);
-    } catch (error: any) {
+    } catch (error: unknown) {
       setSaving(false);
       setIsSaved(false);
-      setTestResult({ success: false, message: error?.message || 'Failed to save database.' });
+      setTestResult({ success: false, message: formatApiErrorMessage(error, 'Failed to save database.', i18n.language) });
     }
   };
 
@@ -656,10 +646,10 @@ export function ProjectConfig() {
       await loadAll();
       setEditingKb(prev => prev ? { ...prev, token: '', has_token: prev.type === 'git' ? true : prev.has_token } : null);
       setTimeout(() => setIsSaved(false), 3000);
-    } catch (error: any) {
+    } catch (error: unknown) {
       setSaving(false);
       setIsSaved(false);
-      setTestResult({ success: false, message: error?.message || 'Failed to save knowledge base.' });
+      setTestResult({ success: false, message: formatApiErrorMessage(error, 'Failed to save knowledge base.', i18n.language) });
     }
   };
 
@@ -704,7 +694,7 @@ export function ProjectConfig() {
     } catch (error: unknown) {
       setExpertNotice({
         type: 'error',
-        text: extractApiErrorDetail(error) || expertCopy.saveError,
+        text: formatApiErrorMessage(error, expertCopy.saveError, i18n.language),
       });
     } finally {
       setSaving(false);
@@ -730,10 +720,10 @@ export function ProjectConfig() {
       setTimeout(() => {
         setIsSaved(false);
       }, 3000);
-    } catch (error: any) {
+    } catch (error: unknown) {
       setSaving(false);
       setIsSaved(false);
-      setTestResult({ success: false, message: error?.message || 'Failed to save model.' });
+      setTestResult({ success: false, message: formatApiErrorMessage(error, 'Failed to save model.', i18n.language) });
     }
   };
 
@@ -751,7 +741,8 @@ export function ProjectConfig() {
       setIsSaved(true);
       await loadAll();
       setTimeout(() => setIsSaved(false), 2000);
-    } catch {
+    } catch (error: unknown) {
+      setTestResult({ success: false, message: formatApiErrorMessage(error, llmCopy.saveError, i18n.language) });
     } finally {
       setSaving(false);
     }
@@ -763,7 +754,8 @@ export function ProjectConfig() {
     try {
       await api.deleteProjectModel(projectId, modelId);
       await loadAll();
-    } catch {
+    } catch (error: unknown) {
+      setTestResult({ success: false, message: formatApiErrorMessage(error, llmCopy.deleteModel, i18n.language) });
     }
   };
 
@@ -772,7 +764,8 @@ export function ProjectConfig() {
     try {
       await api.deleteRepositoryConfig(projectId, repoId);
       await loadAll();
-    } catch {
+    } catch (error: unknown) {
+      setTestResult({ success: false, message: formatApiErrorMessage(error, 'Failed to delete repository.', i18n.language) });
     }
   };
 
@@ -781,7 +774,8 @@ export function ProjectConfig() {
     try {
       await api.deleteDatabaseConfig(projectId, dbId);
       await loadAll();
-    } catch {
+    } catch (error: unknown) {
+      setTestResult({ success: false, message: formatApiErrorMessage(error, 'Failed to delete database.', i18n.language) });
     }
   };
 
@@ -790,7 +784,8 @@ export function ProjectConfig() {
     try {
       await api.deleteKnowledgeBaseConfig(projectId, kbId);
       await loadAll();
-    } catch {
+    } catch (error: unknown) {
+      setTestResult({ success: false, message: formatApiErrorMessage(error, 'Failed to delete knowledge base.', i18n.language) });
     }
   };
 

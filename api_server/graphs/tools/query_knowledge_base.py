@@ -120,6 +120,8 @@ def query_knowledge_base(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str
                     "kb_name": kb_config["name"],
                     "kb_type": kb_config.get("type"),
                     "kb_location": kb_location,
+                    "warnings": index.get("warnings", []),
+                    "limits": index.get("limits", {}),
                     **kb_metadata,
                     **payload,
                 }

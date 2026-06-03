@@ -34,6 +34,14 @@ RUN_STATUS_WAITING_HUMAN = "waiting_human"
 RUN_STATUS_SUCCESS = "success"
 RUN_STATUS_FAILED = "failed"
 RUN_STATUS_SCHEDULED = "scheduled"
+ACTIVE_RUN_STATUSES = {
+    RUN_STATUS_QUEUED,
+    "preflight",
+    RUN_STATUS_RUNNING,
+    RUN_STATUS_WAITING_HUMAN,
+    "cancelling",
+    RUN_STATUS_SCHEDULED,
+}
 PLANNER_EXPERT_SELECTION_INTERACTION = "expert_selection"
 PLANNER_EXPERT_SELECTION_QUESTION = (
     "Review the planner's expert selection. "
@@ -804,6 +812,97 @@ def _sync_workflow_projection_from_payload(
 def _has_active_runtime_task(thread_id: str) -> bool:
     task = runtime_tasks.get(thread_id)
     return bool(task and not task.done())
+
+
+def _has_active_runtime_task_for_version(project_id: str, version: str) -> bool:
+    return _has_active_runtime_task(_thread_id(project_id, version))
+
+
+def _active_job_for_thread(project_id: str, version: str) -> dict | None:
+    thread_id = _thread_id(project_id, version)
+    runtime = runtime_registry.get(thread_id) or {}
+    status = runtime.get("run_status")
+    job_id = runtime.get("job_id")
+    if job_id and status in ACTIVE_RUN_STATUSES:
+        return {"job_id": job_id, "status": status}
+
+    persisted = metadata_db.get_workflow_run(project_id, version) or {}
+    persisted_status = persisted.get("status")
+    persisted_job_id = persisted.get("run_id")
+    if persisted_job_id and persisted_status in ACTIVE_RUN_STATUSES:
+        return {"job_id": persisted_job_id, "status": persisted_status}
+    return None
+
+
+def _active_runtime_conflict(project_id: str, version: str) -> dict | None:
+    active_job = _active_job_for_thread(project_id, version)
+    if _has_active_runtime_task_for_version(project_id, version):
+        return active_job or {"job_id": None, "status": RUN_STATUS_RUNNING}
+    return None
+
+
+def list_active_runs(project_id: str | None = None) -> list[dict]:
+    active: dict[tuple[str, str], dict] = {}
+    for thread_id, runtime in runtime_registry.items():
+        runtime_project_id = runtime.get("project_id")
+        version = runtime.get("version")
+        if not runtime_project_id or not version:
+            matching_project_ids = [
+                project.get("id")
+                for project in metadata_db.list_projects()
+                if project.get("id") and thread_id.startswith(f"{project.get('id')}_")
+            ]
+            if matching_project_ids:
+                runtime_project_id = max(matching_project_ids, key=len)
+                version = thread_id[len(runtime_project_id) + 1 :]
+        if not runtime_project_id or not version:
+            continue
+        if project_id and runtime_project_id != project_id:
+            continue
+        status = runtime.get("run_status")
+        job_id = runtime.get("job_id")
+        if job_id and status in ACTIVE_RUN_STATUSES:
+            active[(runtime_project_id, version)] = {
+                "project_id": runtime_project_id,
+                "version": version,
+                "job_id": job_id,
+                "status": status,
+            }
+
+    projects = [metadata_db.get_project(project_id)] if project_id else metadata_db.list_projects()
+    for project in projects:
+        if not project:
+            continue
+        current_project_id = project.get("id")
+        if not current_project_id:
+            continue
+        versions = metadata_db.list_versions(current_project_id, page=1, page_size=10000).get("versions", [])
+        for version_row in versions:
+            version = version_row.get("version_id")
+            if not version:
+                continue
+            active_job = _active_job_for_thread(current_project_id, version)
+            if active_job:
+                active.setdefault(
+                    (current_project_id, version),
+                    {
+                        "project_id": current_project_id,
+                        "version": version,
+                        "job_id": active_job.get("job_id"),
+                        "status": active_job.get("status"),
+                    },
+                )
+    return list(active.values())
+
+
+def active_run_conflict_detail(project_id: str | None = None) -> dict | None:
+    active_runs = list_active_runs(project_id)
+    if not active_runs:
+        return None
+    return {
+        "message": "Configuration cannot be changed while a workflow run is active.",
+        "active_runs": active_runs,
+    }
 
 
 def _launch_runtime_task(thread_id: str, coro):
@@ -2414,6 +2513,9 @@ async def submit_interaction_response(project_id: str, version: str, interaction
 
 
 async def resume_workflow(project_id: str, version: str, human_input: dict):
+    if _active_runtime_conflict(project_id, version):
+        return False
+
     action = (human_input or {}).get("action")
     feedback = (human_input or {}).get("feedback", "")
     answer = (human_input or {}).get("answer", "")
@@ -2622,6 +2724,9 @@ async def retry_workflow_node(
     node_type: str,
     model: str | None = None,
 ):
+    if _active_runtime_conflict(project_id, version):
+        return False
+
     current_state = get_workflow_state(project_id, version)
     if not current_state:
         return False
@@ -2858,6 +2963,10 @@ async def continue_workflow(
     version: str,
     model: str | None = None,
 ):
+    if _active_runtime_conflict(project_id, version):
+        print(f"[DEBUG] continue_workflow: active runtime task exists for {project_id}/{version}")
+        return False
+
     current_state = get_workflow_state(project_id, version)
     if not current_state:
         print(f"[DEBUG] continue_workflow: No state found for {project_id}/{version}")
@@ -3088,7 +3197,18 @@ async def _scheduled_run_worker(schedule_id: str):
 
         project_id = schedule["project_id"]
         version = schedule["version_id"]
-        job_id = trigger_orchestrator(
+        active_job = _active_job_for_thread(project_id, version)
+        if active_job:
+            metadata_db.update_scheduled_run(
+                schedule_id,
+                status="skipped_conflict",
+                error=f"Skipped because version already has active job {active_job.get('job_id') or '(unknown)'}.",
+                triggered_job_id=active_job.get("job_id"),
+                triggered_at=_now_iso(),
+            )
+            return
+
+        run_result = trigger_orchestrator(
             project_id,
             version,
             schedule.get("requirement") or "",
@@ -3098,7 +3218,7 @@ async def _scheduled_run_worker(schedule_id: str):
             schedule_id,
             status="triggered",
             error=None,
-            triggered_job_id=job_id,
+            triggered_job_id=run_result["job_id"],
             triggered_at=_now_iso(),
         )
     except asyncio.CancelledError:
@@ -3221,7 +3341,15 @@ def trigger_orchestrator(
     version: str,
     requirement_text: str,
     model: str | None = None,
-) -> str:
+) -> dict:
+    active_job = _active_job_for_thread(project_id, version)
+    if active_job:
+        return {
+            "job_id": active_job["job_id"],
+            "status": active_job["status"],
+            "reused_existing_job": True,
+        }
+
     _cancel_scheduled_tasks_for_version(project_id, version)
     metadata_db.cancel_scheduled_runs_for_version(
         project_id,
@@ -3240,28 +3368,6 @@ def trigger_orchestrator(
         can_resume=False,
         job_id=job_id,
     )
-    preflight_state = {
-        "project_id": project_id,
-        "version": version,
-        "requirement": requirement_text,
-        "design_context": {},
-        "task_queue": [
-            {"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "todo", "dependencies": [], "priority": 100}
-        ],
-    }
-    try:
-        _run_llm_connectivity_preflight(project_id, version, preflight_state, model)
-    except Exception as exc:
-        _mark_workflow_failed(
-            project_id,
-            version,
-            job_id,
-            reason=str(exc),
-            job_id=job_id,
-            current_node="planner",
-            task_queue=preflight_state["task_queue"],
-        )
-        return job_id
     _launch_runtime_task(
         _thread_id(project_id, version),
         run_orchestrator_task(
@@ -3270,10 +3376,10 @@ def trigger_orchestrator(
             version,
             requirement_text,
             model=model,
-            preflight_checked=True,
+            preflight_checked=False,
         ),
     )
-    return job_id
+    return {"job_id": job_id, "status": RUN_STATUS_QUEUED, "reused_existing_job": False}
 
 
 def get_job_status(job_id: str):

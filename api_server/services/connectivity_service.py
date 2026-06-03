@@ -37,6 +37,25 @@ _build_git_url_with_credentials = build_git_url_with_credentials
 _build_git_auth_header = build_git_auth_header
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _repo_timeout() -> int:
+    return _env_int("REPOSITORY_CONNECTIVITY_TIMEOUT_SECONDS", 15)
+
+
+def _db_timeout() -> int:
+    return _env_int("DATABASE_CONNECTIVITY_TIMEOUT_SECONDS", 10)
+
+
+def _kb_timeout() -> int:
+    return _env_int("KB_CONNECTIVITY_TIMEOUT_SECONDS", 15)
+
+
 def test_repository_connection(config: Dict[str, Any]) -> TestResult:
     """
     Test repository connection by attempting to access the repository.
@@ -67,7 +86,7 @@ def test_repository_connection(config: Dict[str, Any]) -> TestResult:
                     ["git", "-C", str(local_path_obj), "rev-parse", "--git-dir"],
                     capture_output=True,
                     text=True,
-                    timeout=10
+                    timeout=min(10, _repo_timeout())
                 )
                 if result.returncode == 0:
                     return TestResult(
@@ -94,7 +113,7 @@ def test_repository_connection(config: Dict[str, Any]) -> TestResult:
             cmd,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=_repo_timeout(),
             env=env
         )
         
@@ -191,7 +210,7 @@ def _test_postgresql(host: str, port: int, database: str, username: str, passwor
             dbname=database,
             user=username or "postgres",
             password=password or "",
-            connect_timeout=10
+            connect_timeout=_db_timeout()
         )
         cursor = conn.cursor()
         cursor.execute("SELECT version();")
@@ -225,7 +244,7 @@ def _test_mysql(host: str, port: int, database: str, username: str, password: st
             database=database,
             user=username or "root",
             password=password or "",
-            connect_timeout=10
+            connect_timeout=_db_timeout()
         )
         cursor = conn.cursor()
         cursor.execute("SELECT VERSION();")
@@ -259,7 +278,7 @@ def _test_opengauss(host: str, port: int, database: str, username: str, password
             dbname=database,
             user=username or "postgres",
             password=password or "",
-            connect_timeout=10
+            connect_timeout=_db_timeout()
         )
         cursor = conn.cursor()
         cursor.execute("SELECT version();")
@@ -360,7 +379,7 @@ def test_knowledge_base_connection(config: Dict[str, Any]) -> TestResult:
         # Test if the URL is reachable
         try:
             import requests
-            response = requests.get(index_url, timeout=10)
+            response = requests.get(index_url, timeout=_kb_timeout())
             if response.status_code == 200:
                 return TestResult(
                     True,
@@ -397,7 +416,7 @@ def test_knowledge_base_connection(config: Dict[str, Any]) -> TestResult:
                     build_noninteractive_git_command(["ls-remote", "--heads", git_url, branch], extra_configs=extra_configs),
                     capture_output=True,
                     text=True,
-                    timeout=30,
+                    timeout=_kb_timeout(),
                     env=git_noninteractive_env(),
                 )
                 if result.returncode != 0:

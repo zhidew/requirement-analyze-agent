@@ -1,4 +1,5 @@
 import re
+import os
 import subprocess
 from pathlib import Path
 from typing import Any, Dict
@@ -14,12 +15,24 @@ from services.kb_indexer import KnowledgeBaseError
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PROJECTS_DIR = BASE_DIR / "projects"
+DEFAULT_GIT_TIMEOUT_SECONDS = 120
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _slugify_path_component(value: str, default: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or default).strip())
+    normalized = normalized.strip("-.")
+    return normalized or default
 
 
 def _slugify_branch(branch: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", str(branch or "main").strip())
-    normalized = normalized.strip("-.")
-    return normalized or "main"
+    return _slugify_path_component(branch, "main")
 
 
 def _resolve_effective_root(repo_root: Path, repo_path: str | None) -> Path:
@@ -73,18 +86,24 @@ def sync_git_knowledge_base(project_id: str, kb_config: Dict[str, Any]) -> Dict[
     branch = kb_config.get("branch") or (source_repo or {}).get("branch") or "main"
     username = kb_config.get("username") or (source_repo or {}).get("username")
     token = kb_config.get("token") or (source_repo or {}).get("token")
-    target_dir = PROJECTS_DIR / project_id / "knowledge_repos" / f"{kb_id}--{_slugify_branch(branch)}"
+    target_root = (PROJECTS_DIR / project_id / "knowledge_repos").resolve()
+    target_dir = (target_root / f"{_slugify_path_component(kb_id, 'kb')}--{_slugify_branch(branch)}").resolve()
+    try:
+        target_dir.relative_to(target_root)
+    except ValueError as exc:
+        raise KnowledgeBaseError("Git knowledge base target directory must stay inside knowledge_repos.") from exc
     target_dir.parent.mkdir(parents=True, exist_ok=True)
+    git_timeout = _env_int("KB_GIT_SYNC_TIMEOUT_SECONDS", DEFAULT_GIT_TIMEOUT_SECONDS)
 
     try:
         if target_dir.exists():
-            _run_git(["-C", str(target_dir), "fetch", "origin", "--prune"], url=url, username=username, token=token)
+            _run_git(["-C", str(target_dir), "fetch", "origin", "--prune"], url=url, username=username, token=token, timeout=git_timeout)
             checkout = subprocess.run(
                 build_noninteractive_git_command(["-C", str(target_dir), "checkout", branch]),
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=git_timeout,
                 env=git_noninteractive_env(),
             )
             if checkout.returncode != 0:
@@ -93,12 +112,13 @@ def sync_git_knowledge_base(project_id: str, kb_config: Dict[str, Any]) -> Dict[
                     url=url,
                     username=username,
                     token=token,
+                    timeout=git_timeout,
                 )
-            _run_git(["-C", str(target_dir), "pull", "--ff-only", "origin", branch], url=url, username=username, token=token)
+            _run_git(["-C", str(target_dir), "pull", "--ff-only", "origin", branch], url=url, username=username, token=token, timeout=git_timeout)
         else:
-            _run_git(["clone", "--branch", branch, url, str(target_dir)], url=url, username=username, token=token, timeout=120)
+            _run_git(["clone", "--branch", branch, url, str(target_dir)], url=url, username=username, token=token, timeout=git_timeout)
 
-        commit_hash = _run_git(["-C", str(target_dir), "rev-parse", "HEAD"], url=url, username=username, token=token).stdout.strip()
+        commit_hash = _run_git(["-C", str(target_dir), "rev-parse", "HEAD"], url=url, username=username, token=token, timeout=git_timeout).stdout.strip()
     except subprocess.CalledProcessError as exc:
         error = (exc.stderr or exc.stdout or str(exc)).strip()
         raise KnowledgeBaseError(f"Failed to sync Git knowledge base '{kb_id}': {error}") from exc
