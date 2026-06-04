@@ -24,6 +24,8 @@ from config import get_phase_config
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PLANNER_EXPERT_SELECTION_INTERACTION = "expert_selection"
 PLANNER_REASONING_TITLE = "### 编排规划推理"
+REQUIREMENT_CLARIFIER_REASONING_TITLE = "### 需求澄清推理"
+REQUIREMENT_CLARIFICATION_MAX_ROUNDS = int(os.getenv("REQUIREMENT_CLARIFICATION_MAX_ROUNDS", "6"))
 
 # Agent aliases for normalization (kept for backward compatibility)
 AGENT_ALIASES = {
@@ -1236,69 +1238,180 @@ def _requirement_clarifier_success_task() -> List[Task]:
     return [{"id": "rq0", "agent_type": "requirement_clarifier", "stage": 0, "phase": "ANALYSIS", "status": "success", "dependencies": [], "priority": 110}]
 
 
+def _requirement_clarifier_failed_task() -> List[Task]:
+    return [{"id": "rq0", "agent_type": "requirement_clarifier", "stage": 0, "phase": "ANALYSIS", "status": "failed", "dependencies": [], "priority": 110}]
+
+
+def _format_asset_insights_for_prompt(asset_insights: Dict[str, Any]) -> str:
+    insight_sections: List[str] = []
+    query_status = asset_insights.get("query_status", {}) if isinstance(asset_insights, dict) else {}
+    query_errors = asset_insights.get("query_errors", []) if isinstance(asset_insights, dict) else []
+
+    status_summary = []
+    asset_label = {"database": "Database", "knowledge_base": "Knowledge Base", "repository": "Code Repository"}
+    for asset_key, label in asset_label.items():
+        st = query_status.get(asset_key, "skipped")
+        if st == "skipped":
+            status_summary.append(f"  - {label}: NOT CONFIGURED (no {asset_key.replace('_', ' ')} set up for this project)")
+        elif st == "success":
+            status_summary.append(f"  - {label}: queried successfully")
+        elif st == "partial_failure":
+            status_summary.append(f"  - {label}: PARTIAL FAILURE (some queries succeeded, some failed)")
+        elif st == "failed":
+            status_summary.append(f"  - {label}: QUERY FAILED (all queries errored, do NOT waste effort retrying)")
+    if status_summary:
+        insight_sections.append("Three-Repository Query Status:")
+        insight_sections.extend(status_summary)
+
+    if asset_insights.get("database_insights"):
+        insight_sections.append("Database Insights (queried table structures):")
+        for db in asset_insights["database_insights"]:
+            insight_sections.append(
+                f"  - DB '{db['name']}' ({db['type']}): {db['table_count']} tables: {', '.join(db['table_names'][:10])}"
+            )
+    if asset_insights.get("knowledge_base_insights"):
+        insight_sections.append("Knowledge Base Insights (searched for RR-relevant content):")
+        for kb in asset_insights["knowledge_base_insights"]:
+            matches_summary = ", ".join(
+                m.get("title") or m.get("feature_id") or ""
+                for m in kb.get("top_matches", [])
+            )[:200]
+            insight_sections.append(
+                f"  - KB '{kb['kb_name']}' (keyword '{kb['search_keyword']}'): {kb['match_count']} matches. Top: {matches_summary}"
+            )
+    if asset_insights.get("repository_insights"):
+        insight_sections.append("Code Repository Insights (top-level structure):")
+        for repo in asset_insights["repository_insights"]:
+            insight_sections.append(
+                f"  - Repo '{repo['name']}' (branch {repo['branch']}): dirs: {', '.join(repo['top_level_dirs'][:10])}"
+            )
+    if query_errors:
+        insight_sections.append("Query Errors (do not retry unavailable resources in this clarification step):")
+        for err_msg in query_errors[:6]:
+            insight_sections.append(f"  - {err_msg}")
+
+    return "\n".join(insight_sections)
+
+
+def _normalize_requirement_clarification_context(raw_context: Any) -> Dict[str, Any]:
+    normalized_context = _normalize_interrupt_context(raw_context)
+    options = normalized_context.get("options") or []
+    if len(options) < 2:
+        options = [
+            {
+                "value": "confirm_current_understanding",
+                "label": "按当前理解继续",
+                "description": "确认系统基于 RR 和已配置资产形成的理解，可以作为后续 IR 分析范围。",
+            },
+            {
+                "value": "provide_scope_adjustment",
+                "label": "补充或调整边界",
+                "description": "当前理解仍有偏差，需要在补充说明中修正目标、范围、约束或优先级。",
+            },
+        ]
+    normalized_context["options"] = options[:5]
+    normalized_context["allow_free_text"] = True
+    normalized_context["question_schema"] = {
+        "type": "single_select",
+        "allow_free_text": True,
+    }
+    normalized_context.setdefault("topic", "requirement_clarification")
+    normalized_context.setdefault("preferred_answer_type", "single_select")
+    return normalized_context
+
+
 def _build_requirement_clarification_question(
     requirement_text: str,
     prior_answers: List[Dict[str, Any]],
+    *,
+    uploaded_files: List[str],
+    structure_summary: List[Dict[str, Any]],
+    asset_context: Dict[str, Any],
+    asset_insights: Dict[str, Any],
+    llm_settings: Dict[str, Any] | None,
+    project_id: str,
+    version: str,
 ) -> Dict[str, Any] | None:
     normalized_requirement = str(requirement_text or "").strip()
     round_index = len([entry for entry in prior_answers if isinstance(entry, dict)])
-    prior_text = " ".join(
-        str(entry.get("answer") or entry.get("summary") or "").casefold()
-        for entry in prior_answers
-        if isinstance(entry, dict)
+    if round_index >= REQUIREMENT_CLARIFICATION_MAX_ROUNDS:
+        return None
+
+    system_prompt = f"""You are a senior BA requirement clarifier working in a ReAct style.
+You must analyze the RR together with uploaded materials and configured project assets before deciding the next clarification.
+
+Rules:
+- Always use the provided observations from uploaded files, code repository, database, and knowledge base when they are available.
+- On the first clarification round, you MUST ask exactly one choice-based question even if the RR text is long.
+- On later rounds, ask one more question only when a remaining ambiguity materially affects IR scope, business rules, forms/actions, process, integration, roles, data, acceptance criteria, or delivery boundaries.
+- Stop asking when prior human answers are enough; unresolved minor points should be recorded as assumptions.
+- The question must be concrete and business-aware. Do not use stiff boilerplate such as "为了开始需求分析，请先明确...".
+- The question MUST be answerable by single choice, with 2 to 5 options. Free text is allowed for corrections.
+- All natural-language output must be Simplified Chinese.
+
+Output `clarification_decision` as a JSON object string:
+{{
+  "needs_human": true,
+  "question": "一个具体的单选澄清问题",
+  "context": {{
+    "why_needed": "为什么这个问题会影响后续 IR 分析或专家选择",
+    "options": [
+      {{"value": "stable_option_id", "label": "选项名称", "description": "选这个选项意味着什么"}}
+    ],
+    "allow_free_text": true,
+    "missing_information": ["scope_boundary"],
+    "evidence_used": ["RR 文本", "数据库表结构", "知识库命中", "代码仓目录"]
+  }},
+  "requirement_understanding": "当前对目标、范围、规则、约束和资产线索的理解摘要",
+  "assumptions": ["如果无需继续追问，写入可接受假设"]
+}}"""
+
+    user_prompt = (
+        f"RR Text:\n{normalized_requirement or '(empty)'}\n\n"
+        f"Clarification Round: {round_index + 1}/{REQUIREMENT_CLARIFICATION_MAX_ROUNDS}\n"
+        f"Prior Human Answers: {json.dumps(prior_answers, ensure_ascii=False)}\n"
+        f"Uploaded Files: {', '.join(uploaded_files) if uploaded_files else '(none)'}\n"
+        f"Uploaded File Structures: {json.dumps(structure_summary, ensure_ascii=False)}\n"
     )
+    if asset_context:
+        user_prompt += f"\nConfigured Assets:\n{json.dumps(asset_context, ensure_ascii=False)}\n"
+    formatted_insights = _format_asset_insights_for_prompt(asset_insights)
+    if formatted_insights:
+        user_prompt += f"\nThree-Repository Content Insights:\n{formatted_insights}\n"
 
-    if round_index == 0 and len(normalized_requirement) < 120:
-        return {
-            "question": "为了开始需求分析，请先明确这次 RR 最重要的业务目标和交付范围边界。",
-            "context": {
-                "why_needed": "当前 RR 描述较短，系统还无法稳定判断哪些业务能力属于本次 IR 范围，哪些属于后续阶段。",
-                "options": [
-                    {
-                        "value": "goal_scope_first",
-                        "label": "先明确目标与范围",
-                        "description": "说明本次最重要的业务目标，以及必须覆盖和暂不覆盖的模块。",
-                    },
-                    {
-                        "value": "deliverables_first",
-                        "label": "先明确交付物",
-                        "description": "说明本次需要重点分析哪些需求内容，例如规则、单据、流程、集成或验收标准。",
-                    },
-                ],
-                "allow_free_text": True,
-                "question_schema": {
-                    "type": "single_select",
-                    "allow_free_text": True,
-                },
-            },
-        }
+    llm_decision = generate_with_llm(
+        system_prompt,
+        user_prompt,
+        ["clarification_decision"],
+        llm_settings=llm_settings,
+        project_id=project_id,
+        version=version,
+        node_id="requirement_clarifier",
+    )
+    decision_payload = json.loads(llm_decision.artifacts.get("clarification_decision", "{}"))
+    if not isinstance(decision_payload, dict):
+        raise ValueError("Requirement clarifier LLM returned a non-object clarification_decision.")
 
-    if round_index == 1 and not any(keyword in prior_text for keyword in ["约束", "限制", "性能", "安全", "时效", "合规", "兼容"]):
-        return {
-            "question": "继续开始需求分析前，请补充这次 RR 最关键的业务约束或非功能要求。",
-            "context": {
-                "why_needed": "即使业务范围已经明确，如果缺少关键约束，规划器仍可能选择不准确的 BA 专家或形成偏离实际的 IR。",
-                "options": [
-                    {
-                        "value": "performance_security",
-                        "label": "重点补充权限与合规约束",
-                        "description": "适用于对角色权限、数据范围、审计、合规或风险控制有明确要求的场景。",
-                    },
-                    {
-                        "value": "integration_timeline",
-                        "label": "重点补充集成与时间约束",
-                        "description": "适用于受上下游系统、上线时间、存量流程或阶段范围限制的场景。",
-                    },
-                ],
-                "allow_free_text": True,
-                "question_schema": {
-                    "type": "single_select",
-                    "allow_free_text": True,
-                },
-            },
-        }
+    needs_human = bool(decision_payload.get("needs_human"))
+    if round_index == 0:
+        needs_human = True
+    if not needs_human:
+        return None
 
-    return None
+    context = _normalize_requirement_clarification_context(decision_payload.get("context"))
+    question = str(decision_payload.get("question") or "").strip()
+    if not question:
+        understanding = str(decision_payload.get("requirement_understanding") or "").strip()
+        question = "基于当前材料，下面哪种理解最接近本次 IR 分析的真实范围？" if understanding else "下面哪种方向最接近本次 RR 需要优先澄清的范围？"
+    context.setdefault("requirement_understanding", decision_payload.get("requirement_understanding"))
+    context.setdefault("assumptions", decision_payload.get("assumptions") or [])
+
+    return {
+        "question": question,
+        "context": context,
+        "reasoning": llm_decision.reasoning,
+        "decision": decision_payload,
+    }
 
 
 def _append_planner_assumption_note(reasoning: str, question: str, context: Dict[str, Any] | None = None) -> str:
@@ -1399,8 +1512,64 @@ async def requirement_clarifier_node(state: DesignState) -> Dict[str, Any]:
     project_id = state["project_id"]
     version = state["version"]
     requirement_text = state.get("requirement", "")
+    project_path = BASE_DIR / "projects" / project_id / version
+    baseline_dir = project_path / "baseline"
+    logs_dir = project_path / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    list_files_result = execute_tool("list_files", {"root_dir": str(baseline_dir)})
+    uploaded_files = [file_info["name"] for file_info in list_files_result["output"].get("files", [])]
+    extract_structure_result = execute_tool(
+        "extract_structure",
+        {
+            "root_dir": str(baseline_dir),
+            "files": [file_info["path"] for file_info in list_files_result["output"].get("files", [])],
+        },
+    )
+    tool_results = [list_files_result, extract_structure_result]
+    structure_summary = extract_structure_result["output"].get("files", [])
+    asset_context = _build_project_asset_context(project_id)
+    asset_insights = _query_asset_insights(project_id, requirement_text)
+    runtime_llm_settings = resolve_runtime_llm_settings(state.get("design_context"))
     clarifier_answers = ((state.get("human_answers") or {}).get("requirement_clarifier") or [])
-    question_payload = _build_requirement_clarification_question(requirement_text, clarifier_answers)
+    try:
+        question_payload = await asyncio.to_thread(
+            _build_requirement_clarification_question,
+            requirement_text,
+            clarifier_answers,
+            uploaded_files=uploaded_files,
+            structure_summary=structure_summary,
+            asset_context=asset_context,
+            asset_insights=asset_insights,
+            llm_settings=runtime_llm_settings,
+            project_id=project_id,
+            version=version,
+        )
+    except Exception as exc:
+        error_message = f"Requirement clarifier LLM failed: {exc}"
+        print(f"[ERROR] {error_message}")
+        reasoning_sections = [
+            REQUIREMENT_CLARIFIER_REASONING_TITLE,
+            "",
+            "**状态：** 需求澄清阶段调用 LLM 失败，流程已停止。",
+            "",
+            f"**错误：** {error_message}",
+        ]
+        (logs_dir / "requirement-clarifier-reasoning.md").write_text("\n".join(reasoning_sections), encoding="utf-8")
+        return {
+            "workflow_phase": "ANALYSIS",
+            "task_queue": _requirement_clarifier_failed_task(),
+            "history": [
+                f"[ERROR] Requirement clarifier LLM connectivity or generation failed: {exc}",
+            ],
+            "human_intervention_required": False,
+            "waiting_reason": error_message,
+            "pending_interrupt": None,
+            "run_status": "failed",
+            "last_worker": "requirement_clarifier",
+            "current_node": "requirement_clarifier",
+            "tool_results": tool_results,
+        }
 
     if question_payload:
         pending_interrupt = _build_pending_interrupt(
@@ -1411,11 +1580,19 @@ async def requirement_clarifier_node(state: DesignState) -> Dict[str, Any]:
             resume_target="requirement_clarifier",
             interrupt_kind="ask_human",
         )
+        reasoning_sections = [
+            REQUIREMENT_CLARIFIER_REASONING_TITLE,
+            "",
+            question_payload.get("reasoning") or "LLM 已结合 RR 材料和项目资产生成澄清问题。",
+            "",
+            f"**澄清问题：** {pending_interrupt['question']}",
+        ]
+        (logs_dir / "requirement-clarifier-reasoning.md").write_text("\n".join(reasoning_sections), encoding="utf-8")
         return {
             "workflow_phase": "ANALYSIS",
             "task_queue": _requirement_clarifier_waiting_task(),
             "history": [
-                "[系统] 需求澄清阶段发现仍有关键边界未确认，正在请求人工补充信息。",
+                "[系统] 需求澄清阶段已结合 RR 材料和项目资产完成分析，正在请求人工选择确认。",
             ],
             "human_intervention_required": True,
             "waiting_reason": pending_interrupt["question"],
@@ -1423,12 +1600,21 @@ async def requirement_clarifier_node(state: DesignState) -> Dict[str, Any]:
             "run_status": "waiting_human",
             "last_worker": "requirement_clarifier",
             "current_node": "requirement_clarifier",
+            "tool_results": tool_results,
         }
 
     clarification_summary = _summarize_human_inputs(clarifier_answers) if clarifier_answers else None
     history_lines = ["[系统] 需求澄清阶段已完成，工作流将进入规划阶段。"]
     if clarification_summary and clarification_summary.get("summary"):
         history_lines.append(f"[系统] 已记录需求澄清摘要：{clarification_summary['summary']}")
+    reasoning_sections = [
+        REQUIREMENT_CLARIFIER_REASONING_TITLE,
+        "",
+        "LLM 已结合现有 RR 材料、人工回答和项目资产判断：当前信息足以进入规划阶段。",
+    ]
+    if clarification_summary and clarification_summary.get("summary"):
+        reasoning_sections.extend(["", f"**已确认澄清摘要：**\n{clarification_summary['summary']}"])
+    (logs_dir / "requirement-clarifier-reasoning.md").write_text("\n".join(reasoning_sections), encoding="utf-8")
     return {
         "workflow_phase": "ANALYSIS",
         "task_queue": _requirement_clarifier_success_task(),
@@ -1439,6 +1625,7 @@ async def requirement_clarifier_node(state: DesignState) -> Dict[str, Any]:
         "run_status": "running",
         "last_worker": "requirement_clarifier",
         "current_node": "requirement_clarifier",
+        "tool_results": tool_results,
     }
 
 
