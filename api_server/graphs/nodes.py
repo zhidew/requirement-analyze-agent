@@ -1198,14 +1198,50 @@ def _summarize_human_inputs(answer_entries: List[Dict[str, Any]], human_feedback
         summary = (entry.get("summary") or "").strip()
         answer = (entry.get("answer") or "").strip()
         selected_option = (entry.get("selected_option") or "").strip()
-        if selected_option:
+        selected_option_detail = entry.get("selected_option_detail") if isinstance(entry.get("selected_option_detail"), dict) else {}
+        selected_options_detail = entry.get("selected_options_detail") if isinstance(entry.get("selected_options_detail"), list) else []
+        answer_context = entry.get("answer_context") if isinstance(entry.get("answer_context"), dict) else {}
+        if selected_option_detail:
+            label = str(selected_option_detail.get("label") or selected_option_detail.get("value") or selected_option).strip()
+            value = str(selected_option_detail.get("value") or selected_option).strip()
+            description = str(selected_option_detail.get("description") or "").strip()
+            selected_option_text = f"Selected option: {label}"
+            if value and value != label:
+                selected_option_text += f" ({value})"
+            if description:
+                selected_option_text += f" - {description}"
+        elif selected_options_detail:
+            option_texts = []
+            for option in selected_options_detail:
+                if not isinstance(option, dict):
+                    continue
+                label = str(option.get("label") or option.get("value") or "").strip()
+                value = str(option.get("value") or "").strip()
+                description = str(option.get("description") or "").strip()
+                option_text = label
+                if value and value != label:
+                    option_text += f" ({value})"
+                if description:
+                    option_text += f" - {description}"
+                if option_text:
+                    option_texts.append(option_text)
+            selected_option_text = f"Selected options: {'; '.join(option_texts)}" if option_texts else ""
+        elif selected_option:
             selected_option_text = f"Selected option: {selected_option}"
-            if summary:
-                summary = f"{selected_option_text}. {summary}"
-            elif answer:
-                summary = f"{selected_option_text}. {answer}"
-            else:
-                summary = selected_option_text
+        else:
+            selected_option_text = ""
+        context_parts = []
+        if answer_context.get("why_needed"):
+            context_parts.append(f"question rationale: {answer_context['why_needed']}")
+        if answer_context.get("requirement_understanding"):
+            context_parts.append(f"prior understanding: {answer_context['requirement_understanding']}")
+        if answer_context.get("evidence_used"):
+            context_parts.append(f"evidence used: {json.dumps(answer_context['evidence_used'], ensure_ascii=False)}")
+        if selected_option_text and selected_option_text not in summary:
+            summary = f"{selected_option_text}. {summary or answer}".strip()
+        if context_parts:
+            context_text = " | ".join(str(part) for part in context_parts if part)
+            summary = f"{summary} [{context_text}]" if summary else context_text
         if summary and answer and summary != answer:
             summary_parts.append(f"{summary} 原文: {answer}")
         else:
@@ -1344,6 +1380,7 @@ Rules:
 - Always use the provided observations from uploaded files, code repository, database, and knowledge base when they are available.
 - On the first clarification round, you MUST ask exactly one choice-based question even if the RR text is long.
 - On later rounds, ask one more question only when a remaining ambiguity materially affects IR scope, business rules, forms/actions, process, integration, roles, data, acceptance criteria, or delivery boundaries.
+- Treat Prior Human Answers as authoritative. Do NOT ask a new question that is semantically equivalent to a prior answered question; instead, move to the next unresolved decision or stop asking.
 - Stop asking when prior human answers are enough; unresolved minor points should be recorded as assumptions.
 - The question must be concrete and business-aware. Do not use stiff boilerplate such as "为了开始需求分析，请先明确...".
 - The question MUST be answerable by single choice, with 2 to 5 options. Free text is allowed for corrections.

@@ -93,9 +93,6 @@ export function HumanInteractionPanel({
   );
 
   const latestQuestion = currentInteraction?.question_text || waitingReason || '';
-  const whyNeeded = typeof currentInteraction?.context?.why_needed === 'string'
-    ? currentInteraction.context.why_needed
-    : '';
   const schemaType = String(questionSchema.type ?? '').trim().toLowerCase();
   const isSchemaMultiSelect = schemaType === 'multi_select';
   const isSchemaBoolean = schemaType === 'boolean';
@@ -176,7 +173,7 @@ export function HumanInteractionPanel({
             {panelTitle}
           </h2>
           <p className="text-sm font-medium text-amber-900/80">
-            {latestQuestion || panelDescription}
+            {panelDescription}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -191,10 +188,14 @@ export function HumanInteractionPanel({
         </div>
       </div>
 
-      {whyNeeded && !isPlannerExpertSelectionInterrupt && (
-        <div className="rounded-2xl border border-amber-200 bg-white/80 px-4 py-3 text-sm font-medium text-amber-900">
-          <span className="font-black">{t('projectDetail.waitingHuman.whyMatters')}: </span>
-          {whyNeeded}
+      {latestQuestion && (
+        <div className="rounded-2xl border border-amber-200 bg-white/90 px-4 py-3">
+          <div className="mb-1 text-[10px] font-black uppercase tracking-widest text-amber-700">
+            {currentQuestionTitle}
+          </div>
+          <div className="text-sm font-black leading-6 text-amber-950">
+            {latestQuestion}
+          </div>
         </div>
       )}
 

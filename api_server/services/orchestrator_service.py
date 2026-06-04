@@ -247,6 +247,66 @@ def _build_question_schema(question: str, context: Dict[str, Any] | None = None)
     return schema
 
 
+def _collect_interrupt_options(pending_interrupt: Dict[str, Any] | None) -> List[Dict[str, Any]]:
+    pending_interrupt = pending_interrupt or {}
+    context = pending_interrupt.get("context") if isinstance(pending_interrupt.get("context"), dict) else {}
+    question_schema = pending_interrupt.get("question_schema") if isinstance(pending_interrupt.get("question_schema"), dict) else {}
+    raw_options = context.get("options") or question_schema.get("options") or []
+    return [dict(option) for option in raw_options if isinstance(option, dict)]
+
+
+def _selected_option_detail(value: str | None, pending_interrupt: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    normalized_value = str(value or "").strip()
+    if not normalized_value:
+        return None
+    for option in _collect_interrupt_options(pending_interrupt):
+        option_value = str(option.get("value") or option.get("label") or "").strip()
+        if option_value == normalized_value:
+            return {
+                "value": normalized_value,
+                "label": str(option.get("label") or normalized_value).strip(),
+                "description": str(option.get("description") or "").strip(),
+            }
+    return {"value": normalized_value, "label": normalized_value, "description": ""}
+
+
+def _selected_options_detail(values: List[str], pending_interrupt: Dict[str, Any] | None) -> List[Dict[str, Any]]:
+    return [
+        detail
+        for detail in (_selected_option_detail(value, pending_interrupt) for value in values)
+        if detail
+    ]
+
+
+def _summarize_selected_option_detail(detail: Dict[str, Any] | None) -> str:
+    if not detail:
+        return ""
+    label = str(detail.get("label") or detail.get("value") or "").strip()
+    value = str(detail.get("value") or "").strip()
+    description = str(detail.get("description") or "").strip()
+    if description:
+        return f"{label} ({value}): {description}" if value and value != label else f"{label}: {description}"
+    return f"{label} ({value})" if value and value != label else label
+
+
+def _build_answer_context_snapshot(pending_interrupt: Dict[str, Any] | None) -> Dict[str, Any]:
+    pending_interrupt = pending_interrupt or {}
+    context = pending_interrupt.get("context") if isinstance(pending_interrupt.get("context"), dict) else {}
+    return {
+        key: context.get(key)
+        for key in (
+            "why_needed",
+            "missing_information",
+            "evidence_used",
+            "requirement_understanding",
+            "assumptions",
+            "topic",
+            "preferred_answer_type",
+        )
+        if context.get(key) not in (None, "", [])
+    }
+
+
 def _build_interaction_summary_from_payload(human_input: Dict[str, Any], pending_interrupt: Dict[str, Any]) -> str:
     action = str((human_input or {}).get("action") or "").strip()
     response = (human_input or {}).get("response") or {}
@@ -262,6 +322,8 @@ def _build_interaction_summary_from_payload(human_input: Dict[str, Any], pending
         (human_input or {}).get("selected_options") if isinstance((human_input or {}).get("selected_options"), list)
         else response.get("selected_options") or (response.get("values") if response_type == "multi_select" else None)
     )
+    selected_option_detail = _selected_option_detail(selected_option, pending_interrupt)
+    selected_options_detail = _selected_options_detail(selected_options, pending_interrupt)
     if action == "approve":
         return "Approved to continue."
     if action == "revise":
@@ -270,10 +332,11 @@ def _build_interaction_summary_from_payload(human_input: Dict[str, Any], pending
         summary = f"Selected experts: {', '.join(selected_experts)}"
         return f"{summary}. {answer}".strip(". ") if answer else summary
     if selected_options:
-        summary = f"Selected options: {', '.join(selected_options)}"
+        option_summary = "; ".join(_summarize_selected_option_detail(detail) for detail in selected_options_detail)
+        summary = f"Selected options: {option_summary or ', '.join(selected_options)}"
         return f"{summary}. {answer}".strip(". ") if answer else summary
     if selected_option:
-        summary = f"Selected option: {selected_option}"
+        summary = f"Selected option: {_summarize_selected_option_detail(selected_option_detail)}"
         return f"{summary}. {answer}".strip(". ") if answer else summary
     return answer or feedback or "Submitted human response."
 
@@ -575,6 +638,125 @@ def _persist_clarification_artifacts(project_id: str, version: str, state: Dict[
     }
 
 
+def _load_persisted_requirement_text(project_id: str, version: str, fallback: str = "") -> str:
+    normalized_fallback = str(fallback or "").strip()
+    if normalized_fallback:
+        return normalized_fallback
+
+    version_record = metadata_db.get_version(project_id, version) or {}
+    version_requirement = str(version_record.get("requirement") or "").strip()
+    if version_requirement:
+        return version_requirement
+
+    baseline_dir = PROJECTS_DIR / project_id / version / "baseline"
+    for filename in ("raw-requirements.md", "original-requirements.md"):
+        path = baseline_dir / filename
+        if path.exists():
+            try:
+                content = path.read_text(encoding="utf-8").strip()
+                if content:
+                    return content
+            except OSError:
+                pass
+
+    requirements_json_path = baseline_dir / "requirements.json"
+    if requirements_json_path.exists():
+        try:
+            payload = json.loads(requirements_json_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                for key in ("requirement", "original_requirement"):
+                    content = str(payload.get(key) or "").strip()
+                    if content:
+                        return content
+        except Exception:
+            pass
+    return ""
+
+
+def _write_requirement_baseline_files(
+    project_id: str,
+    version: str,
+    requirement_text: str,
+    *,
+    overwrite: bool = False,
+) -> None:
+    normalized_requirement = str(requirement_text or "").strip()
+    if not normalized_requirement:
+        return
+    baseline_dir = PROJECTS_DIR / project_id / version / "baseline"
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    for filename in ("raw-requirements.md", "original-requirements.md"):
+        path = baseline_dir / filename
+        try:
+            if overwrite or not path.exists() or not path.read_text(encoding="utf-8").strip():
+                path.write_text(normalized_requirement, encoding="utf-8")
+        except OSError:
+            path.write_text(normalized_requirement, encoding="utf-8")
+
+
+def _build_human_answers_from_interactions(project_id: str, version: str) -> Dict[str, List[Dict[str, Any]]]:
+    human_answers: Dict[str, List[Dict[str, Any]]] = {}
+    for interaction in reversed(metadata_db.list_human_interactions(project_id, version)):
+        answer_payload = interaction.get("answer")
+        if not isinstance(answer_payload, dict):
+            continue
+        owner_node = str(interaction.get("owner_node") or "planner").strip() or "planner"
+        response = answer_payload.get("response") if isinstance(answer_payload.get("response"), dict) else {}
+        pending_snapshot = {
+            "context": interaction.get("context") if isinstance(interaction.get("context"), dict) else {},
+            "question_schema": interaction.get("question_schema") if isinstance(interaction.get("question_schema"), dict) else {},
+        }
+        selected_option = answer_payload.get("selected_option") or response.get("value")
+        selected_options = _normalize_string_list(answer_payload.get("selected_options"))
+        entry = {
+            "interaction_id": interaction.get("interaction_id"),
+            "interrupt_id": answer_payload.get("interrupt_id"),
+            "question": interaction.get("question_text"),
+            "answer": str(answer_payload.get("answer") or answer_payload.get("feedback") or response.get("text") or "").strip(),
+            "selected_option": selected_option,
+            "selected_option_detail": answer_payload.get("selected_option_detail") or _selected_option_detail(selected_option, pending_snapshot),
+            "selected_options": selected_options or None,
+            "selected_options_detail": answer_payload.get("selected_options_detail") or _selected_options_detail(selected_options, pending_snapshot),
+            "selected_experts": answer_payload.get("selected_experts"),
+            "recommended_experts": answer_payload.get("recommended_experts"),
+            "selection_type": answer_payload.get("selection_type"),
+            "answer_context": answer_payload.get("answer_context") or _build_answer_context_snapshot(pending_snapshot),
+            "summary": interaction.get("summary") or answer_payload.get("summary") or "",
+        }
+        human_answers.setdefault(owner_node, []).append(entry)
+    return human_answers
+
+
+def _merge_human_answers(
+    state_answers: Dict[str, List[Dict[str, Any]]] | None,
+    persisted_answers: Dict[str, List[Dict[str, Any]]] | None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    merged: Dict[str, List[Dict[str, Any]]] = {
+        str(key): [dict(entry) for entry in value if isinstance(entry, dict)]
+        for key, value in (persisted_answers or {}).items()
+        if isinstance(value, list)
+    }
+    for key, entries in (state_answers or {}).items():
+        if not isinstance(entries, list):
+            continue
+        bucket = merged.setdefault(str(key), [])
+        seen = {
+            str(entry.get("interaction_id") or entry.get("interrupt_id") or entry.get("summary") or entry.get("question") or "")
+            for entry in bucket
+            if isinstance(entry, dict)
+        }
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            dedupe_key = str(entry.get("interaction_id") or entry.get("interrupt_id") or entry.get("summary") or entry.get("question") or "")
+            if dedupe_key and dedupe_key in seen:
+                continue
+            bucket.append(dict(entry))
+            if dedupe_key:
+                seen.add(dedupe_key)
+    return merged
+
+
 def _thread_id(project_id: str, version: str) -> str:
     return f"{project_id}_{version}"
 
@@ -623,6 +805,12 @@ def _set_runtime_state(
     thread_id = _thread_id(project_id, version)
     previous = runtime_registry.get(thread_id, {})
     existing_projection = metadata_db.get_workflow_run(project_id, version) or {}
+    existing_version = metadata_db.get_version(project_id, version) or {}
+    resolved_requirement = (
+        str(previous.get("requirement") or "").strip()
+        or str(existing_version.get("requirement") or "").strip()
+        or _load_persisted_requirement_text(project_id, version)
+    )
     resolved_pending_interrupt = None
     if run_status == RUN_STATUS_WAITING_HUMAN:
         resolved_pending_interrupt = (
@@ -632,12 +820,13 @@ def _set_runtime_state(
         )
 
     # Also update persistent metadata DB
-    metadata_db.upsert_version(project_id, version, previous.get("requirement", ""), run_status)
+    metadata_db.upsert_version(project_id, version, resolved_requirement, run_status)
 
     runtime_registry[thread_id] = {
         **previous,
         "project_id": project_id,
         "version": version,
+        "requirement": resolved_requirement,
         "job_id": job_id or previous.get("job_id"),
         "run_status": run_status,
         "current_node": current_node,
@@ -1325,6 +1514,9 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         return None
 
     state = dict(raw_state or {})
+    persisted_requirement = _load_persisted_requirement_text(project_id, version, state.get("requirement", ""))
+    persisted_human_answers = _build_human_answers_from_interactions(project_id, version)
+    merged_human_answers = _merge_human_answers(state.get("human_answers") or {}, persisted_human_answers)
     workflow_tasks = metadata_db.list_workflow_tasks(project_id, version)
     initial_status = (
         runtime.get("run_status")
@@ -1452,7 +1644,8 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         "can_resume": can_resume,
         "waiting_reason": waiting_reason,
         "pending_interrupt": pending_interrupt,
-        "human_answers": state.get("human_answers") or {},
+        "human_answers": merged_human_answers,
+        "requirement": persisted_requirement,
         "updated_at": normalized_updated_at,
         "stale_execution_detected": stale_running_detected,
         "node_llm_map": node_llm_map,
@@ -2112,6 +2305,7 @@ def _build_graph_input_state(
     feedback: str = "",
     model: str | None = None,
 ) -> dict:
+    resolved_requirement = _load_persisted_requirement_text(project_id, version, requirement_text)
     messages = list((persisted_state or {}).get("messages", []))
     history = list((persisted_state or {}).get("history", []))
     resume_target_node = (persisted_state or {}).get("resume_target_node")
@@ -2169,7 +2363,7 @@ def _build_graph_input_state(
         "project_id": project_id,
         "version": version,
         "run_id": job_id,
-        "requirement": requirement_text or (persisted_state or {}).get("requirement", ""),
+        "requirement": resolved_requirement,
         "design_context": design_context,
         "task_queue": resume_task_queue,
         "workflow_phase": workflow_phase,
@@ -2203,6 +2397,8 @@ async def run_orchestrator_task(
     model: str | None = None,
     preflight_checked: bool = False,
 ):
+    requirement_text = _load_persisted_requirement_text(project_id, version, requirement_text)
+    _write_requirement_baseline_files(project_id, version, requirement_text)
     thread_id = _thread_id(project_id, version)
     print(f"\n[DEBUG] Starting/Resuming Job: {job_id} for Thread: {thread_id}")
     _ensure_job(job_id)["status"] = RUN_STATUS_RUNNING
@@ -2223,7 +2419,7 @@ async def run_orchestrator_task(
         (project_path / "logs").mkdir(parents=True, exist_ok=True)
 
         if requirement_text:
-            (baseline_path / "raw-requirements.md").write_text(requirement_text, encoding="utf-8")
+            _write_requirement_baseline_files(project_id, version, requirement_text)
 
         persisted_state = persisted_state_override if persisted_state_override is not None else get_workflow_state(project_id, version)
         initial_state = _build_graph_input_state(
@@ -2425,12 +2621,20 @@ def get_workflow_state(project_id: str, version: str, include_runtime: bool = Tr
         persisted_logs = get_run_log(project_id, version, BASE_DIR)
         fallback_state = None
         if persisted_logs:
+            pending_interaction = metadata_db.get_latest_human_interaction_for_version(
+                project_id,
+                version,
+                statuses=["waiting_user"],
+            )
             fallback_state = {
                 "project_id": project_id,
                 "version": version,
+                "requirement": _load_persisted_requirement_text(project_id, version),
                 "workflow_phase": "ARCHIVED",
                 "task_queue": _build_legacy_task_queue(project_id, version),
                 "history": persisted_logs,
+                "human_answers": _build_human_answers_from_interactions(project_id, version),
+                "pending_interrupt": _pending_interrupt_from_interaction_record(pending_interaction),
             }
         return _normalize_state(project_id, version, fallback_state, runtime=runtime)
     except Exception as e:
@@ -2454,7 +2658,7 @@ def get_current_interaction(project_id: str, version: str) -> Dict[str, Any] | N
     latest = metadata_db.get_latest_human_interaction_for_version(
         project_id,
         version,
-        statuses=["waiting_user", "answered"],
+        statuses=["waiting_user"],
     )
     return _hydrate_human_interaction(latest)
 
@@ -2585,6 +2789,9 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
         "feedback": str(feedback or "").strip(),
         "selected_option": selected_option or None,
         "selected_options": selected_options or None,
+        "selected_option_detail": _selected_option_detail(selected_option, pending_interrupt),
+        "selected_options_detail": _selected_options_detail(selected_options, pending_interrupt),
+        "answer_context": _build_answer_context_snapshot(pending_interrupt),
         "answer_merge_targets": _normalize_string_list(
             (((human_input or {}).get("response") or {}).get("answer_merge_targets"))
             or ((pending_interrupt.get("context") or {}).get("answer_merge_targets"))
@@ -2602,11 +2809,20 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
         if not normalized_answer and not selected_option and not has_selected_experts_payload and not has_selected_options_payload:
             return False
         resume_target_node = pending_interrupt.get("resume_target") or requested_node_id or "planner"
-        target_key = requested_node_id or "planner"
+        target_key = (
+            pending_interrupt.get("owner_node")
+            or pending_interrupt.get("resume_target")
+            or pending_interrupt.get("node_type")
+            or requested_node_id
+            or "planner"
+        )
         answer_entries = list(human_answers.get(target_key, []))
         summary = normalized_answer
+        selected_option_detail = _selected_option_detail(selected_option, pending_interrupt)
+        selected_options_detail = _selected_options_detail(selected_options, pending_interrupt)
+        answer_context_snapshot = _build_answer_context_snapshot(pending_interrupt)
         if selected_option:
-            summary = f"Selected option: {selected_option}"
+            summary = f"Selected option: {_summarize_selected_option_detail(selected_option_detail)}"
             if normalized_answer:
                 summary = f"{summary}. {normalized_answer}"
         if has_selected_experts_payload:
@@ -2614,16 +2830,20 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
             if normalized_answer:
                 summary = f"{summary}. {normalized_answer}"
         if has_selected_options_payload:
-            summary = f"Selected options: {', '.join(selected_options) if selected_options else '(none)'}"
+            option_summary = "; ".join(_summarize_selected_option_detail(detail) for detail in selected_options_detail)
+            summary = f"Selected options: {option_summary or ', '.join(selected_options) if selected_options else '(none)'}"
             if normalized_answer:
                 summary = f"{summary}. {normalized_answer}"
         answer_entries.append(
             {
+                "interaction_id": interaction_id,
                 "interrupt_id": requested_interrupt_id,
                 "question": pending_interrupt.get("question") or current_state.get("waiting_reason"),
                 "answer": normalized_answer,
                 "selected_option": selected_option or None,
+                "selected_option_detail": selected_option_detail,
                 "selected_options": selected_options if has_selected_options_payload else None,
+                "selected_options_detail": selected_options_detail if has_selected_options_payload else None,
                 "selected_experts": selected_experts if has_selected_experts_payload else None,
                 "recommended_experts": (
                     _normalize_string_list(interrupt_context.get("recommended_experts"))
@@ -2631,6 +2851,7 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
                     else None
                 ),
                 "selection_type": interaction_type if has_selected_experts_payload else None,
+                "answer_context": answer_context_snapshot,
                 "summary": summary,
             }
         )
@@ -3292,6 +3513,8 @@ async def schedule_orchestrator_run(
     scheduled_for: str,
     model: str | None = None,
 ) -> dict:
+    requirement_text = _load_persisted_requirement_text(project_id, version, requirement_text)
+    _write_requirement_baseline_files(project_id, version, requirement_text, overwrite=True)
     scheduled_at = _parse_iso_timestamp(scheduled_for)
     if scheduled_at is None:
         raise ValueError("Invalid scheduled time.")
@@ -3355,6 +3578,8 @@ def trigger_orchestrator(
     requirement_text: str,
     model: str | None = None,
 ) -> dict:
+    requirement_text = _load_persisted_requirement_text(project_id, version, requirement_text)
+    _write_requirement_baseline_files(project_id, version, requirement_text, overwrite=True)
     active_job = _active_job_for_thread(project_id, version)
     if active_job:
         return {
@@ -3373,6 +3598,7 @@ def trigger_orchestrator(
     job_id = str(uuid.uuid4())
     _ensure_job(job_id)
     jobs[job_id]["status"] = RUN_STATUS_QUEUED
+    metadata_db.upsert_version(project_id, version, requirement_text, RUN_STATUS_QUEUED)
     _set_runtime_state(
         project_id,
         version,
