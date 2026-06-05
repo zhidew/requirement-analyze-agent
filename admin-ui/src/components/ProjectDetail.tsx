@@ -45,6 +45,8 @@ type StreamStatus = 'idle' | 'connecting' | 'connected' | 'error';
 type RunStatus = 'scheduled' | 'queued' | 'running' | 'waiting_human' | 'success' | 'failed';
 type ArtifactStatus = 'created' | 'updated';
 
+const ACTIVE_REFRESH_RUN_STATUSES = new Set<RunStatus>(['scheduled', 'queued', 'running', 'waiting_human']);
+
 interface InputFile {
   type: 'ir' | 'competitor';
   file: File;
@@ -778,8 +780,6 @@ export function ProjectDetail() {
   useEffect(() => {
     if (id && selectedVersion) {
       void fetchState();
-      void fetchLogs();
-      void fetchInteractionContext();
     }
   }, [id, selectedVersion]);
 
@@ -795,7 +795,7 @@ export function ProjectDetail() {
 
     const shouldPoll =
       Boolean(id && selectedVersion) &&
-      ['scheduled', 'running', 'queued', 'waiting_human'].includes(workflowState?.run_status || '');
+      ACTIVE_REFRESH_RUN_STATUSES.has(workflowState?.run_status as RunStatus);
 
     if (shouldPoll) {
       pollInterval.current = setInterval(() => {
@@ -1002,7 +1002,7 @@ export function ProjectDetail() {
   };
 
   useEffect(() => {
-    if (!currentRunId || !selectedVersion) {
+    if (!currentRunId || !selectedVersion || !ACTIVE_REFRESH_RUN_STATUSES.has(workflowState?.run_status as RunStatus)) {
       return;
     }
 
@@ -1050,7 +1050,7 @@ export function ProjectDetail() {
         eventSourceRef.current = null;
       }
     };
-  }, [currentRunId, selectedVersion]);
+  }, [currentRunId, selectedVersion, workflowState?.run_status]);
 
   const fetchState = async (versionOverride?: string) => {
     const versionToFetch = versionOverride ?? selectedVersionRef.current;
@@ -1065,8 +1065,10 @@ export function ProjectDetail() {
       if (selectedVersionRef.current !== versionToFetch) return;
       setWorkflowState(state);
       latestFetchedStateAtRef.current = Date.parse(state.updated_at || '') || 0;
-      if (state.run_id) {
+      if (state.run_id && ACTIVE_REFRESH_RUN_STATUSES.has(state.run_status)) {
         setCurrentRunId(state.run_id);
+      } else {
+        setCurrentRunId(null);
       }
 
       const newStatuses: Record<string, NodeStatus> = {};
@@ -1369,7 +1371,6 @@ export function ProjectDetail() {
     seenEventIdsRef.current.clear();
     setSelectedFile(null);
     setSelectedNode('planner');
-    void loadArtifacts(version);
   };
 
   const handleDeleteVersion = async (version: string) => {
