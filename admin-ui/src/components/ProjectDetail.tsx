@@ -632,9 +632,11 @@ export function ProjectDetail() {
 
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const eventSourceRunKeyRef = useRef<string | null>(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const seenLlmChunkKeysRef = useRef<Set<string>>(new Set());
   const latestFetchedStateAtRef = useRef<number>(0);
+  const workflowRunStatusRef = useRef<RunStatus | null>(null);
 
   const selectedVersionRef = useRef<string | null>(null);
   const plannerExpertSelectionInitializedRef = useRef<string | null>(null);
@@ -847,6 +849,10 @@ export function ProjectDetail() {
   }, [selectedVersion]);
 
   useEffect(() => {
+    workflowRunStatusRef.current = workflowState?.run_status ?? null;
+  }, [workflowState?.run_status]);
+
+  useEffect(() => {
     if (pollInterval.current) {
       clearInterval(pollInterval.current);
       pollInterval.current = null;
@@ -871,12 +877,13 @@ export function ProjectDetail() {
     tasks.map((task) => task.agent_type === nodeType ? { ...task, status } : task)
   );
 
-  const appendEvent = (event: OrchestratorEvent) => {
+  const appendEvent = (event: OrchestratorEvent): boolean => {
     if (seenEventIdsRef.current.has(event.event_id)) {
-      return;
+      return false;
     }
     seenEventIdsRef.current.add(event.event_id);
     setRunEvents((prev) => [...prev, event]);
+    return true;
   };
 
   const applyLlmStreamEvent = (event: OrchestratorEvent) => {
@@ -975,7 +982,16 @@ export function ProjectDetail() {
     setCurrentRunId(event.run_id);
     setStreamStatus('connected');
     applyLlmStreamEvent(event);
-    const isWaitingHuman = workflowState?.run_status === 'waiting_human';
+    if (event.event_type === 'waiting_human') {
+      workflowRunStatusRef.current = 'waiting_human';
+    } else if (event.event_type === 'run_completed') {
+      workflowRunStatusRef.current = 'success';
+    } else if (event.event_type === 'run_failed') {
+      workflowRunStatusRef.current = 'failed';
+    } else if (event.event_type === 'node_started' && workflowRunStatusRef.current !== 'waiting_human') {
+      workflowRunStatusRef.current = 'running';
+    }
+    const isWaitingHuman = workflowRunStatusRef.current === 'waiting_human';
     if (eventVersion) {
       switch (event.event_type) {
         case 'node_started':
@@ -1137,11 +1153,13 @@ export function ProjectDetail() {
         void fetchState(eventVersion);
         eventSourceRef.current?.close();
         eventSourceRef.current = null;
+        eventSourceRunKeyRef.current = null;
         break;
       case 'run_failed':
         void fetchState(eventVersion);
         eventSourceRef.current?.close();
         eventSourceRef.current = null;
+        eventSourceRunKeyRef.current = null;
         break;
       case 'tool_event':
         break;
@@ -1151,11 +1169,16 @@ export function ProjectDetail() {
   };
 
   useEffect(() => {
-    if (!currentRunId || !selectedVersion || !ACTIVE_REFRESH_RUN_STATUSES.has(workflowState?.run_status as RunStatus)) {
+    if (!currentRunId || !selectedVersion) {
       return;
     }
 
+    const runKey = `${selectedVersion}:${currentRunId}`;
+    if (eventSourceRef.current && eventSourceRunKeyRef.current === runKey) {
+      return;
+    }
     eventSourceRef.current?.close();
+    eventSourceRunKeyRef.current = runKey;
     const source = new EventSource(api.getJobStatusSseUrl(currentRunId));
     const sourceVersion = selectedVersion;
     eventSourceRef.current = source;
@@ -1167,7 +1190,9 @@ export function ProjectDetail() {
         return;
       }
       const event = JSON.parse(message.data) as OrchestratorEvent;
-      appendEvent(event);
+      if (!appendEvent(event)) {
+        return;
+      }
       applyEventToState(event, sourceVersion);
     };
 
@@ -1193,6 +1218,7 @@ export function ProjectDetail() {
       source.close();
       if (eventSourceRef.current === source) {
         eventSourceRef.current = null;
+        eventSourceRunKeyRef.current = null;
       }
     };
 
@@ -1201,9 +1227,10 @@ export function ProjectDetail() {
       source.close();
       if (eventSourceRef.current === source) {
         eventSourceRef.current = null;
+        eventSourceRunKeyRef.current = null;
       }
     };
-  }, [currentRunId, selectedVersion, workflowState?.run_status]);
+  }, [currentRunId, selectedVersion]);
 
   const fetchState = async (versionOverride?: string) => {
     const versionToFetch = versionOverride ?? selectedVersionRef.current;
@@ -1507,6 +1534,7 @@ export function ProjectDetail() {
   const handleSelectVersion = (version: string) => {
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
+    eventSourceRunKeyRef.current = null;
     selectedVersionRef.current = version;
     setSelectedVersion(version);
     setCurrentRunId(null);
@@ -1552,6 +1580,7 @@ export function ProjectDetail() {
         } else {
           eventSourceRef.current?.close();
           eventSourceRef.current = null;
+          eventSourceRunKeyRef.current = null;
           setSelectedVersion(null);
           setCurrentRunId(null);
           setRunEvents([]);
