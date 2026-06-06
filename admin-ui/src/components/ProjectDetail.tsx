@@ -183,6 +183,41 @@ interface TextDeltaEvent extends EventBase {
   delta: string;
 }
 
+interface LlmStreamBaseEvent extends EventBase {
+  call_id: string;
+  node_id: string;
+  node_type: string;
+  provider: string;
+  model: string;
+  attempt: number;
+  metadata?: Record<string, unknown>;
+}
+
+interface LlmStreamStartedEvent extends LlmStreamBaseEvent {
+  event_type: 'llm_stream_started';
+  call_purpose?: string;
+}
+
+interface LlmStreamDeltaEvent extends LlmStreamBaseEvent {
+  event_type: 'llm_stream_delta';
+  sequence: number;
+  delta: string;
+}
+
+interface LlmStreamCompletedEvent extends LlmStreamBaseEvent {
+  event_type: 'llm_stream_completed';
+  sequence: number;
+  final_parse_status: string;
+  fallback_used: boolean;
+}
+
+interface LlmStreamFailedEvent extends LlmStreamBaseEvent {
+  event_type: 'llm_stream_failed';
+  sequence: number;
+  error_message: string;
+  will_retry: boolean;
+}
+
 interface ArtifactUpdatedEvent extends EventBase {
   event_type: 'artifact_updated';
   node_id: string;
@@ -383,6 +418,10 @@ type OrchestratorEvent =
   | NodeStartedEvent
   | NodeCompletedEvent
   | TextDeltaEvent
+  | LlmStreamStartedEvent
+  | LlmStreamDeltaEvent
+  | LlmStreamCompletedEvent
+  | LlmStreamFailedEvent
   | ArtifactUpdatedEvent
   | ArtifactGovernanceReviewableEvent
   | ToolEvent
@@ -393,6 +432,24 @@ type OrchestratorEvent =
 type ExecutionLogEntry =
   | { kind: 'text'; id: string; text: string; tone: 'default' | 'error'; timestamp?: string | null }
   | { kind: 'tool'; id: string; event: ToolEvent };
+
+type LlmStreamStatus = 'streaming' | 'completed' | 'failed';
+
+interface LlmStreamState {
+  callId: string;
+  nodeId: string;
+  nodeType: string;
+  provider: string;
+  model: string;
+  attempt: number;
+  status: LlmStreamStatus;
+  text: string;
+  lastSequence: number;
+  errorMessage?: string;
+  finalParseStatus?: string;
+  fallbackUsed?: boolean;
+  updatedAt: string;
+}
 
 const NODE_STATUS_PRIORITY: Record<NodeStatus, number> = {
   idle: 0,
@@ -542,6 +599,7 @@ export function ProjectDetail() {
   const [clarifiedRequirements, setClarifiedRequirements] = useState<ClarifiedRequirementsPayload | null>(null);
   const [versionLogs, setVersionLogs] = useState<string[]>([]);
   const [runEvents, setRunEvents] = useState<OrchestratorEvent[]>([]);
+  const [llmStreamsByCallId, setLlmStreamsByCallId] = useState<Record<string, LlmStreamState>>({});
   const [versionStateMap, setVersionStateMap] = useState<Record<string, VersionStateSummary>>({});
 
   const [page, setPage] = useState(1);
@@ -575,6 +633,7 @@ export function ProjectDetail() {
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
+  const seenLlmChunkKeysRef = useRef<Set<string>>(new Set());
   const latestFetchedStateAtRef = useRef<number>(0);
 
   const selectedVersionRef = useRef<string | null>(null);
@@ -820,6 +879,85 @@ export function ProjectDetail() {
     setRunEvents((prev) => [...prev, event]);
   };
 
+  const applyLlmStreamEvent = (event: OrchestratorEvent) => {
+    if (!event.event_type.startsWith('llm_stream_')) {
+      return;
+    }
+    const streamEvent = event as LlmStreamStartedEvent | LlmStreamDeltaEvent | LlmStreamCompletedEvent | LlmStreamFailedEvent;
+    const callId = streamEvent.call_id;
+    setLlmStreamsByCallId((prev) => {
+      const existing = prev[callId];
+      const base: LlmStreamState = existing ?? {
+        callId,
+        nodeId: streamEvent.node_id,
+        nodeType: streamEvent.node_type,
+        provider: streamEvent.provider,
+        model: streamEvent.model,
+        attempt: streamEvent.attempt,
+        status: 'streaming',
+        text: '',
+        lastSequence: 0,
+        updatedAt: streamEvent.timestamp,
+      };
+
+      if (streamEvent.event_type === 'llm_stream_delta') {
+        const chunkKey = `${streamEvent.call_id}:${streamEvent.attempt}:${streamEvent.sequence}`;
+        if (seenLlmChunkKeysRef.current.has(chunkKey)) {
+          return prev;
+        }
+        seenLlmChunkKeysRef.current.add(chunkKey);
+        const nextText = `${base.text}${streamEvent.delta}`;
+        return {
+          ...prev,
+          [callId]: {
+            ...base,
+            attempt: streamEvent.attempt,
+            status: 'streaming',
+            text: nextText.length > 8000 ? nextText.slice(nextText.length - 8000) : nextText,
+            lastSequence: Math.max(base.lastSequence, streamEvent.sequence),
+            updatedAt: streamEvent.timestamp,
+          },
+        };
+      }
+
+      if (streamEvent.event_type === 'llm_stream_completed') {
+        return {
+          ...prev,
+          [callId]: {
+            ...base,
+            status: 'completed',
+            lastSequence: Math.max(base.lastSequence, streamEvent.sequence),
+            finalParseStatus: streamEvent.final_parse_status,
+            fallbackUsed: streamEvent.fallback_used,
+            updatedAt: streamEvent.timestamp,
+          },
+        };
+      }
+
+      if (streamEvent.event_type === 'llm_stream_failed') {
+        return {
+          ...prev,
+          [callId]: {
+            ...base,
+            status: 'failed',
+            lastSequence: Math.max(base.lastSequence, streamEvent.sequence),
+            errorMessage: streamEvent.error_message,
+            updatedAt: streamEvent.timestamp,
+          },
+        };
+      }
+
+      return {
+        ...prev,
+        [callId]: {
+          ...base,
+          status: 'streaming',
+          updatedAt: streamEvent.timestamp,
+        },
+      };
+    });
+  };
+
   const syncVersionState = (version: string, summary: VersionStateSummary) => {
     setVersionStateMap((prev) => ({
       ...prev,
@@ -836,6 +974,7 @@ export function ProjectDetail() {
     }
     setCurrentRunId(event.run_id);
     setStreamStatus('connected');
+    applyLlmStreamEvent(event);
     if (eventVersion) {
       switch (event.event_type) {
         case 'node_started':
@@ -1026,6 +1165,10 @@ export function ProjectDetail() {
       'node_started',
       'node_completed',
       'text_delta',
+      'llm_stream_started',
+      'llm_stream_delta',
+      'llm_stream_completed',
+      'llm_stream_failed',
       'artifact_updated',
       'artifact_governance_reviewable',
       'tool_event',
@@ -1191,6 +1334,7 @@ export function ProjectDetail() {
     setInteractionHistory([]);
     setClarifiedRequirements(null);
     setRunEvents([]);
+    setLlmStreamsByCallId({});
     latestFetchedStateAtRef.current = 0;
     plannerExpertSelectionInitializedRef.current = null;
     setReviewFeedback('');
@@ -1198,6 +1342,7 @@ export function ProjectDetail() {
     setInteractionResponseDraft({});
     setSelectedPlannerExperts([]);
     seenEventIdsRef.current.clear();
+    seenLlmChunkKeysRef.current.clear();
     setSelectedNode('planner');
     setStreamStatus(streamStatus);
   };
@@ -1356,6 +1501,7 @@ export function ProjectDetail() {
     setSelectedVersion(version);
     setCurrentRunId(null);
     setRunEvents([]);
+    setLlmStreamsByCallId({});
     setNodeStatuses({});
     setWorkflowState(null);
     setCurrentInteraction(null);
@@ -1369,6 +1515,7 @@ export function ProjectDetail() {
     setInteractionResponseDraft({});
     setSelectedPlannerExperts([]);
     seenEventIdsRef.current.clear();
+    seenLlmChunkKeysRef.current.clear();
     setSelectedFile(null);
     setSelectedNode('planner');
   };
@@ -1398,12 +1545,14 @@ export function ProjectDetail() {
           setSelectedVersion(null);
           setCurrentRunId(null);
           setRunEvents([]);
+          setLlmStreamsByCallId({});
           setNodeStatuses({});
           setWorkflowState(null);
           latestFetchedStateAtRef.current = 0;
           setArtifacts({});
           setDesignArtifacts([]);
           setSelectedFile(null);
+          seenLlmChunkKeysRef.current.clear();
           setSelectedNode('planner');
           setStreamStatus('idle');
         }
@@ -1615,6 +1764,13 @@ export function ProjectDetail() {
 
     return mergedEntries;
   }, [runEvents, versionLogs, workflowState?.history, workflowState?.pending_interrupt, workflowState?.run_status]);
+
+  const llmStreamItems = useMemo(
+    () => Object.values(llmStreamsByCallId)
+      .sort((left, right) => Date.parse(right.updatedAt || '') - Date.parse(left.updatedAt || ''))
+      .slice(0, 6),
+    [llmStreamsByCallId],
+  );
 
   const reasoningLogs = useMemo(() => {
     if (!selectedNode) return [];
@@ -2899,29 +3055,61 @@ export function ProjectDetail() {
             </button>
 
             {isLogsOpen && (
-              <div className="bg-gray-900 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-gray-300 overflow-y-auto max-h-[691px] space-y-1 animate-in slide-in-from-top-2 duration-300">
-                {executionEntries.length > 0 ? (
-                  executionEntries.map((entry, idx) => (
-                    entry.kind === 'tool' ? (
-                      <div key={entry.id} className="space-y-2">
-                        <div className="flex gap-3 text-[10px] font-black uppercase tracking-wider text-gray-500">
-                          <span className="text-gray-600">[{idx + 1}]</span>
-                          <span>Structured Tool Event</span>
+              <div className="space-y-3 animate-in slide-in-from-top-2 duration-300">
+                {llmStreamItems.length > 0 && (
+                  <div className="rounded-2xl border border-gray-800 bg-gray-950 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">LLM Stream</div>
+                      <div className="text-[10px] font-bold text-gray-600">{llmStreamItems.length} active/recent</div>
+                    </div>
+                    <div className="space-y-3">
+                      {llmStreamItems.map((item) => (
+                        <div key={item.callId} className="rounded-xl border border-gray-800 bg-gray-900/80 p-3">
+                          <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-bold">
+                            <span className="text-indigo-300">{item.nodeType}</span>
+                            <span className="text-gray-600">{item.model || item.provider}</span>
+                            <span className={`rounded-full px-2 py-0.5 uppercase ${item.status === 'failed' ? 'bg-rose-500/10 text-rose-300' : item.status === 'completed' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-sky-500/10 text-sky-300'}`}>
+                              {item.status}
+                            </span>
+                            <span className="text-gray-600">attempt {item.attempt}</span>
+                            {item.fallbackUsed && <span className="text-amber-300">fallback</span>}
+                          </div>
+                          {item.errorMessage ? (
+                            <div className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-rose-300">{item.errorMessage}</div>
+                          ) : (
+                            <div className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-emerald-300/80">
+                              {item.text || '(waiting for first chunk)'}
+                            </div>
+                          )}
                         </div>
-                        <ToolEventCard event={entry.event} />
-                      </div>
-                    ) : (
-                      <div key={entry.id} className="flex gap-3 whitespace-pre-wrap">
-                        <span className="text-gray-600 flex-shrink-0">[{idx + 1}]</span>
-                        <span className={entry.tone === 'error' ? 'text-rose-400' : 'text-emerald-400/80'}>
-                          {formatExecutionLogText(entry.text, entry.timestamp)}
-                        </span>
-                      </div>
-                    )
-                  ))
-                ) : (
-                  <div className="text-gray-600 italic text-[10px]">{t('projectDetail.noRelevantContext')}</div>
+                      ))}
+                    </div>
+                  </div>
                 )}
+                <div className="bg-gray-900 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-gray-300 overflow-y-auto max-h-[691px] space-y-1">
+                  {executionEntries.length > 0 ? (
+                    executionEntries.map((entry, idx) => (
+                      entry.kind === 'tool' ? (
+                        <div key={entry.id} className="space-y-2">
+                          <div className="flex gap-3 text-[10px] font-black uppercase tracking-wider text-gray-500">
+                            <span className="text-gray-600">[{idx + 1}]</span>
+                            <span>Structured Tool Event</span>
+                          </div>
+                          <ToolEventCard event={entry.event} />
+                        </div>
+                      ) : (
+                        <div key={entry.id} className="flex gap-3 whitespace-pre-wrap">
+                          <span className="text-gray-600 flex-shrink-0">[{idx + 1}]</span>
+                          <span className={entry.tone === 'error' ? 'text-rose-400' : 'text-emerald-400/80'}>
+                            {formatExecutionLogText(entry.text, entry.timestamp)}
+                          </span>
+                        </div>
+                      )
+                    ))
+                  ) : (
+                    <div className="text-gray-600 italic text-[10px]">{t('projectDetail.noRelevantContext')}</div>
+                  )}
+                </div>
               </div>
             )}
           </section>

@@ -109,6 +109,8 @@ interface ModelConfig {
   api_key?: string;
   base_url?: string;
   headers?: string;
+  streaming_enabled?: boolean;
+  provider_capabilities?: string | Record<string, unknown>;
   is_default: boolean;
   has_api_key?: boolean;
   has_headers?: boolean;
@@ -123,6 +125,13 @@ const createModel = (): ModelConfig => ({
   api_key: '',
   base_url: '',
   headers: '',
+  streaming_enabled: false,
+  provider_capabilities: JSON.stringify({
+    supports_stream: true,
+    supports_json_response_format: true,
+    supports_stream_with_json_response_format: true,
+    stream_chunk_format: 'openai_chat_completions',
+  }, null, 2),
   is_default: false,
   description: '',
 });
@@ -192,12 +201,18 @@ function parseHeadersJson(value?: string): Record<string, string> | undefined {
 }
 
 function normalizeModelPayload(model: ModelConfig) {
+  const rawCapabilities = model.provider_capabilities;
+  const providerCapabilities = typeof rawCapabilities === 'string'
+    ? (rawCapabilities.trim() ? JSON.parse(rawCapabilities) : {})
+    : (rawCapabilities || {});
   return {
     ...model,
     provider: 'openai',
     api_key: model.api_key?.trim() ? model.api_key.trim() : undefined,
     base_url: model.base_url?.trim() ? model.base_url.trim() : undefined,
     headers: parseHeadersJson(model.headers),
+    streaming_enabled: Boolean(model.streaming_enabled),
+    provider_capabilities: providerCapabilities,
   };
 }
 
@@ -1555,7 +1570,11 @@ export function ProjectConfig() {
                       <div
                         key={model.id}
                         onClick={() => {
-                          setEditingModel({ ...model, api_key: '' });
+                          setEditingModel({
+                            ...model,
+                            api_key: '',
+                            provider_capabilities: JSON.stringify(model.provider_capabilities || {}, null, 2),
+                          });
                           setTestResult(null);
                           setIsModelModalOpen(true);
                         }}
@@ -1571,6 +1590,11 @@ export function ProjectConfig() {
                               {model.is_default && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-indigo-600 text-white text-[8px] font-black uppercase tracking-wider">
                                   {llmCopy.defaultLabel}
+                                </span>
+                              )}
+                              {model.streaming_enabled && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-[8px] font-black uppercase tracking-wider">
+                                  Stream
                                 </span>
                               )}
                             </div>
@@ -1714,6 +1738,17 @@ export function ProjectConfig() {
                         <span className="text-xs font-bold text-gray-600">{llmCopy.isDefault}</span>
                       </div>
 
+                      <div className="flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setEditingModel({ ...editingModel, streaming_enabled: !editingModel.streaming_enabled })}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${editingModel.streaming_enabled ? 'bg-emerald-600' : 'bg-gray-200'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${editingModel.streaming_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                        <span className="text-xs font-bold text-gray-600">LLM streaming</span>
+                      </div>
+
                       <div className="md:col-span-2 xl:col-span-3">
                         <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">
                           {editingModelApiKeyLabel} {editingModel.has_api_key ? `(${llmCopy.saved})` : ''}
@@ -1736,6 +1771,18 @@ export function ProjectConfig() {
                           onChange={(e) => setEditingModel({ ...editingModel, headers: e.target.value })}
                           placeholder={editingModel.has_headers ? llmCopy.keepCurrentHeaders : llmCopy.requestHeadersPlaceholder}
                           className="min-h-16 w-full resize-none rounded-xl border border-gray-100 bg-gray-50 p-2.5 font-mono text-xs outline-none transition-all focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2 xl:col-span-3">
+                        <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">
+                          Provider capabilities
+                        </label>
+                        <textarea
+                          value={typeof editingModel.provider_capabilities === 'string' ? editingModel.provider_capabilities : JSON.stringify(editingModel.provider_capabilities || {}, null, 2)}
+                          onChange={(e) => setEditingModel({ ...editingModel, provider_capabilities: e.target.value })}
+                          placeholder='{"supports_stream":true,"supports_stream_with_json_response_format":true}'
+                          className="min-h-24 w-full resize-none rounded-xl border border-gray-100 bg-gray-50 p-2.5 font-mono text-xs outline-none transition-all focus:ring-2 focus:ring-indigo-500"
                         />
                       </div>
                     </div>

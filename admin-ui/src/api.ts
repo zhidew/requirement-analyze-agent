@@ -72,6 +72,8 @@ export interface ModelConfig {
   api_key?: string;
   base_url?: string;
   headers?: Record<string, string> | null;
+  streaming_enabled?: boolean;
+  provider_capabilities?: Record<string, unknown>;
   is_default: boolean;
   has_api_key?: boolean;
   has_headers?: boolean;
@@ -529,6 +531,8 @@ export const api = {
     api_key?: string;
     base_url?: string;
     headers?: Record<string, string>;
+    streaming_enabled?: boolean;
+    provider_capabilities?: Record<string, unknown>;
     is_default: boolean;
     description?: string;
   }) => apiClient.post(`/projects/${projectId}/config/models`, payload).then(res => res.data),
@@ -542,6 +546,8 @@ export const api = {
     api_key?: string;
     base_url?: string;
     headers?: Record<string, string>;
+    streaming_enabled?: boolean;
+    provider_capabilities?: Record<string, unknown>;
     is_default: boolean;
     description?: string;
   }) => apiClient.post(`/projects/${projectId}/config/llm/test`, payload).then(res => res.data),
