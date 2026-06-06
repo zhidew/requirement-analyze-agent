@@ -2307,21 +2307,49 @@ def _record_graph_event(
             job_id,
             payload.get("pending_interrupt") or {},
         )
-    node_run_status = RUN_STATUS_WAITING_HUMAN if payload.get("human_intervention_required") else RUN_STATUS_RUNNING
+        payload["run_status"] = RUN_STATUS_WAITING_HUMAN
+    payload_run_status = str(payload.get("run_status") or "").strip()
+    current_runtime_status = str(runtime_registry.get(_thread_id(project_id, version), {}).get("run_status") or "").strip()
+    if payload.get("human_intervention_required"):
+        node_run_status = RUN_STATUS_WAITING_HUMAN
+        should_update_runtime_state = True
+    elif current_runtime_status == RUN_STATUS_WAITING_HUMAN and payload_run_status in {"", RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
+        node_run_status = RUN_STATUS_WAITING_HUMAN
+        should_update_runtime_state = False
+    elif payload_run_status in {
+        RUN_STATUS_QUEUED,
+        RUN_STATUS_RUNNING,
+        RUN_STATUS_WAITING_HUMAN,
+        RUN_STATUS_SUCCESS,
+        RUN_STATUS_FAILED,
+        RUN_STATUS_SCHEDULED,
+    }:
+        node_run_status = payload_run_status
+        should_update_runtime_state = True
+    else:
+        node_run_status = RUN_STATUS_RUNNING
+        should_update_runtime_state = True
     current_node = payload.get("current_node") or node_name
-    _set_runtime_state(
-        project_id,
-        version,
-        run_status=node_run_status,
-        current_node=current_node,
-        waiting_reason=payload.get("waiting_reason"),
-        pending_interrupt=payload.get("pending_interrupt") if payload.get("human_intervention_required") else None,
-        job_id=job_id,
-    )
+    if should_update_runtime_state:
+        _set_runtime_state(
+            project_id,
+            version,
+            run_status=node_run_status,
+            current_node=current_node,
+            waiting_reason=payload.get("waiting_reason"),
+            pending_interrupt=payload.get("pending_interrupt") if node_run_status == RUN_STATUS_WAITING_HUMAN else None,
+            job_id=job_id,
+        )
+    projection_payload = payload
+    if not should_update_runtime_state and current_runtime_status == RUN_STATUS_WAITING_HUMAN:
+        projection_payload = dict(payload)
+        projection_payload.pop("run_status", None)
+        projection_payload.pop("pending_interrupt", None)
+        projection_payload.pop("waiting_reason", None)
     _sync_workflow_projection_from_payload(
         project_id,
         version,
-        payload,
+        projection_payload,
         run_id=job_id,
         authoritative_tasks=node_name in {"planner", "bootstrap"},
     )

@@ -975,14 +975,17 @@ export function ProjectDetail() {
     setCurrentRunId(event.run_id);
     setStreamStatus('connected');
     applyLlmStreamEvent(event);
+    const isWaitingHuman = workflowState?.run_status === 'waiting_human';
     if (eventVersion) {
       switch (event.event_type) {
         case 'node_started':
-          syncVersionState(eventVersion, {
-            run_status: 'running',
-            current_node: event.node_type,
-            updated_at: event.timestamp,
-          });
+          if (!isWaitingHuman) {
+            syncVersionState(eventVersion, {
+              run_status: 'running',
+              current_node: event.node_type,
+              updated_at: event.timestamp,
+            });
+          }
           break;
         case 'waiting_human':
           syncVersionState(eventVersion, {
@@ -1026,6 +1029,13 @@ export function ProjectDetail() {
 
       switch (event.event_type) {
         case 'node_started':
+          if (baseState.run_status === 'waiting_human') {
+            return {
+              ...baseState,
+              updated_at: event.timestamp,
+              task_queue: updateTaskStatus(baseState.task_queue, event.node_type, 'running'),
+            };
+          }
           return {
             ...baseState,
             run_id: event.run_id,
