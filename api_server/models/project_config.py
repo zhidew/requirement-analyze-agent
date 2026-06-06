@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -108,6 +108,8 @@ class ModelConfig(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
+    streaming_enabled: bool = False
+    provider_capabilities: Dict[str, Any] = Field(default_factory=dict)
     is_default: bool = False
     description: Optional[str] = None
 

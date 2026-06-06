@@ -278,6 +278,8 @@ class MetadataDB:
                     api_key TEXT,
                     base_url TEXT,
                     headers TEXT,
+                    streaming_enabled INTEGER NOT NULL DEFAULT 0,
+                    provider_capabilities TEXT,
                     model_name TEXT NOT NULL,
                     is_default INTEGER DEFAULT 0,
                     created_at TEXT NOT NULL,
@@ -704,6 +706,8 @@ class MetadataDB:
                 "CREATE INDEX IF NOT EXISTS idx_artifact_section_reviews_artifact ON artifact_section_reviews(artifact_id, status, updated_at)"
             )
             self._ensure_column(conn, "project_model_configs", "headers", "TEXT")
+            self._ensure_column(conn, "project_model_configs", "streaming_enabled", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "project_model_configs", "provider_capabilities", "TEXT")
             self._ensure_column(conn, "workflow_runs", "pending_interrupt_json", "TEXT")
             self._ensure_column(conn, "knowledge_bases", "url", "TEXT")
             self._ensure_column(conn, "knowledge_bases", "branch", "TEXT NOT NULL DEFAULT 'main'")
@@ -810,14 +814,16 @@ class MetadataDB:
             conn.execute(
                 """
                 INSERT INTO project_model_configs (
-                    id, project_id, name, provider, api_key, base_url, headers, model_name, is_default, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, project_id, name, provider, api_key, base_url, headers, streaming_enabled, provider_capabilities, model_name, is_default, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, id) DO UPDATE SET
                     name=excluded.name,
                     provider=excluded.provider,
                     api_key=excluded.api_key,
                     base_url=excluded.base_url,
                     headers=excluded.headers,
+                    streaming_enabled=excluded.streaming_enabled,
+                    provider_capabilities=excluded.provider_capabilities,
                     model_name=excluded.model_name,
                     is_default=excluded.is_default,
                     updated_at=excluded.updated_at
@@ -830,6 +836,8 @@ class MetadataDB:
                     encrypted_api_key,
                     payload.get("base_url"),
                     encrypted_headers,
+                    1 if payload.get("streaming_enabled") else 0,
+                    self._dumps_json(payload.get("provider_capabilities") or {}),
                     payload.get("model_name"),
                     1 if payload.get("is_default") else 0,
                     (existing.get("created_at") if existing else now),
@@ -878,6 +886,8 @@ class MetadataDB:
             "provider": "openai",
             "base_url": row["base_url"],
             "model_name": row["model_name"],
+            "streaming_enabled": bool(row.get("streaming_enabled")),
+            "provider_capabilities": self._loads_json(row.get("provider_capabilities"), {}) or {},
             "is_default": bool(row["is_default"]),
             "has_api_key": bool(encrypted_api_key),
             "has_headers": bool(encrypted_headers),

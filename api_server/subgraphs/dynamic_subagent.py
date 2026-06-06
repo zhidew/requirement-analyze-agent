@@ -4052,6 +4052,8 @@ async def run_dynamic_subagent(
     def _generate_with_selected_llm(*args: Any, **kwargs: Any) -> SubagentOutput:
         if runtime_llm_settings and "llm_settings" not in kwargs:
             kwargs["llm_settings"] = runtime_llm_settings
+        kwargs.setdefault("node_id", capability)
+        kwargs.setdefault("node_type", capability)
         return generate_with_llm_fn(*args, **kwargs)
     
     # Determine candidate files

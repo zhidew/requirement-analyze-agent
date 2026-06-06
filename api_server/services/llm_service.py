@@ -2,6 +2,9 @@ import os
 import json
 import time
 import threading
+import uuid
+from contextvars import ContextVar
+from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -34,6 +37,14 @@ from services.db_service import metadata_db
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 _LLM_CALL_THROTTLE_LOCK = threading.Lock()
 _LAST_LLM_CALL_STARTED_AT = 0.0
+
+current_job_id: ContextVar[str | None] = ContextVar("current_job_id", default=None)
+current_run_id: ContextVar[str | None] = ContextVar("current_run_id", default=None)
+current_node_type: ContextVar[str | None] = ContextVar("current_node_type", default=None)
+current_streaming_enabled: ContextVar[bool | None] = ContextVar("current_streaming_enabled", default=None)
+current_stream_callback: ContextVar["StreamCallback | None"] = ContextVar("current_stream_callback", default=None)
+
+StreamCallback = Callable[[str, dict[str, Any]], None]
 
 
 def _resolve_nonnegative_float_env(env_key: str, default: float = 0.0) -> float:
@@ -144,7 +155,70 @@ def resolve_runtime_llm_settings(design_context: dict | None) -> dict | None:
         "openai_base_url": base_url,
         "openai_model_name": model_name,
         "openai_headers": model_config.get("headers"),
+        "streaming_enabled": bool(model_config.get("streaming_enabled")),
+        "provider_capabilities": model_config.get("provider_capabilities") or {},
     }
+
+
+def _truthy_env(env_key: str, default: bool = False) -> bool:
+    raw = os.getenv(env_key)
+    if raw in (None, ""):
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_streaming_enabled(llm_settings: dict | None, explicit: bool | None) -> bool:
+    if explicit is not None:
+        return bool(explicit)
+    context_value = current_streaming_enabled.get()
+    if context_value is not None:
+        return bool(context_value)
+    if llm_settings and "streaming_enabled" in llm_settings:
+        return bool(llm_settings.get("streaming_enabled"))
+    return _truthy_env("LLM_STREAMING_ENABLED", False)
+
+
+def _provider_capabilities(llm_settings: dict | None) -> dict[str, Any]:
+    value = (llm_settings or {}).get("provider_capabilities") or {}
+    return value if isinstance(value, dict) else {}
+
+
+def _stream_with_json_response_format_allowed(llm_settings: dict | None) -> bool:
+    capabilities = _provider_capabilities(llm_settings)
+    if capabilities.get("force_streaming_disabled"):
+        return False
+    if capabilities.get("supports_stream") is False:
+        return False
+    return bool(capabilities.get("supports_stream_with_json_response_format", True))
+
+
+def _safe_stream_callback(callback: StreamCallback | None, delta: str, meta: dict[str, Any]) -> None:
+    if callback is None:
+        return
+    try:
+        callback(delta, meta)
+    except Exception as exc:
+        print(f"[LLM Service] Stream callback ignored failure: {exc}")
+
+
+def _extract_stream_delta(chunk: Any) -> str:
+    try:
+        choices = getattr(chunk, "choices", None)
+        if choices:
+            delta = getattr(choices[0], "delta", None)
+            content = getattr(delta, "content", None)
+            if content:
+                return str(content)
+    except Exception:
+        pass
+    if isinstance(chunk, dict):
+        choices = chunk.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0] if isinstance(choices[0], dict) else {}
+            delta = first.get("delta") if isinstance(first, dict) else {}
+            if isinstance(delta, dict) and delta.get("content"):
+                return str(delta.get("content"))
+    return ""
 
 def generate_with_llm(
     system_prompt: str,
@@ -156,6 +230,13 @@ def generate_with_llm(
     version: str | None = None,
     node_id: str | None = None,
     include_full_artifacts_in_log: bool = False,
+    job_id: str | None = None,
+    run_id: str | None = None,
+    node_type: str | None = None,
+    call_purpose: str = "generation",
+    call_id: str | None = None,
+    stream_callback: StreamCallback | None = None,
+    streaming_enabled: bool | None = None,
 ) -> SubagentOutput:
     """
     Generic LLM generator that enforces output containing reasoning log and specified file contents in JSON.
@@ -189,17 +270,51 @@ def generate_with_llm(
     llm_full_payload_logging_enabled = bool((debug_config or {}).get("llm_full_payload_logging_enabled"))
     model_name = _resolve_llm_setting(llm_settings, "openai_model_name", "OPENAI_MODEL_NAME", "gpt-4o")
     timeout_seconds = _get_llm_request_timeout_seconds()
+    effective_node_id = node_id or node_type or current_node_type.get() or "unknown"
+    effective_node_type = node_type or node_id or current_node_type.get() or "unknown"
+    effective_job_id = job_id or current_job_id.get()
+    effective_run_id = run_id or current_run_id.get() or effective_job_id
+    effective_call_id = call_id or f"llm_call_{uuid.uuid4().hex}"
+    effective_streaming_enabled = _resolve_streaming_enabled(llm_settings, streaming_enabled)
+    effective_stream_callback = stream_callback or current_stream_callback.get()
 
     for attempt in range(max_retries + 1):
         attempt_number = attempt + 1
         attempt_started_at = time.monotonic()
+        stream_meta = {
+            "call_id": effective_call_id,
+            "job_id": effective_job_id,
+            "run_id": effective_run_id,
+            "node_id": effective_node_id,
+            "node_type": effective_node_type,
+            "provider": provider,
+            "model": model_name,
+            "attempt": attempt_number,
+            "call_purpose": call_purpose,
+            "streaming_enabled": effective_streaming_enabled,
+        }
         try:
             print(
                 f"[LLM Service] Attempt {attempt_number}/{max_retries + 1} starting "
                 f"provider='{provider}' model='{model_name}' timeout={_format_timeout_seconds(timeout_seconds)} "
                 f"expected_files={_summarize_expected_files(expected_files)}."
             )
-            raw_data = _call_openai_raw(enhanced_system_prompt, user_prompt, llm_settings=llm_settings)
+            raw_data = _call_openai_raw(
+                enhanced_system_prompt,
+                user_prompt,
+                llm_settings=llm_settings,
+                stream_enabled=effective_streaming_enabled,
+                stream_callback=effective_stream_callback,
+                stream_meta=stream_meta,
+            )
+            stream_log_metadata = {
+                "streaming_enabled": effective_streaming_enabled,
+                "streaming_used": bool(raw_data.pop("_streaming_used", False)) if isinstance(raw_data, dict) else False,
+                "fallback_used": bool(raw_data.pop("_fallback_used", False)) if isinstance(raw_data, dict) else False,
+                "chunk_count": int(raw_data.pop("_chunk_count", 0)) if isinstance(raw_data, dict) else 0,
+                "final_parse_status": "success",
+                "attempt_count": attempt_number,
+            }
             
             # Log interaction if project info is provided
             if project_id and version and llm_interaction_logging_enabled:
@@ -207,7 +322,7 @@ def generate_with_llm(
                     project_id=project_id,
                     version=version,
                     base_dir=BASE_DIR,
-                    node_id=node_id or "unknown",
+                    node_id=effective_node_id,
                     system_prompt=enhanced_system_prompt,
                     user_prompt=user_prompt,
                     response=raw_data,
@@ -216,6 +331,7 @@ def generate_with_llm(
                     status="success",
                     include_full_artifacts=include_full_artifacts_in_log,
                     persist_payload_files=llm_full_payload_logging_enabled,
+                    metadata=stream_log_metadata,
                 )
 
             # --- Robust data repair logic ---
@@ -263,7 +379,7 @@ def generate_with_llm(
                     project_id=project_id,
                     version=version,
                     base_dir=BASE_DIR,
-                    node_id=node_id or "unknown",
+                    node_id=effective_node_id,
                     system_prompt=enhanced_system_prompt,
                     user_prompt=user_prompt,
                     response=None,
@@ -272,6 +388,11 @@ def generate_with_llm(
                     status="error",
                     error=f"JSONDecodeError: {str(e)}",
                     persist_payload_files=llm_full_payload_logging_enabled,
+                    metadata={
+                        "streaming_enabled": effective_streaming_enabled,
+                        "final_parse_status": "json_decode_error",
+                        "attempt_count": attempt_number,
+                    },
                 )
             time.sleep(2)
         except Exception as e:
@@ -286,7 +407,7 @@ def generate_with_llm(
                     project_id=project_id,
                     version=version,
                     base_dir=BASE_DIR,
-                    node_id=node_id or "unknown",
+                    node_id=effective_node_id,
                     system_prompt=enhanced_system_prompt,
                     user_prompt=user_prompt,
                     response=None,
@@ -295,6 +416,11 @@ def generate_with_llm(
                     status="error",
                     error=f"Exception: {str(e)}",
                     persist_payload_files=llm_full_payload_logging_enabled,
+                    metadata={
+                        "streaming_enabled": effective_streaming_enabled,
+                        "final_parse_status": "exception",
+                        "attempt_count": attempt_number,
+                    },
                 )
             time.sleep(2)
             
@@ -471,6 +597,9 @@ def _call_openai_raw(
     llm_settings: dict | None = None,
     timeout_seconds: float | None = None,
     max_tokens: int | None = None,
+    stream_enabled: bool = False,
+    stream_callback: StreamCallback | None = None,
+    stream_meta: dict[str, Any] | None = None,
 ) -> dict:
     from openai import OpenAI
     api_key = _resolve_llm_setting(llm_settings, "openai_api_key", "OPENAI_API_KEY")
@@ -512,6 +641,61 @@ def _call_openai_raw(
     if max_tokens is not None:
         completion_kwargs["max_tokens"] = max(1, int(max_tokens))
 
+    if stream_enabled and _stream_with_json_response_format_allowed(llm_settings):
+        try:
+            completion_kwargs["stream"] = True
+            stream = client.chat.completions.create(**completion_kwargs)
+            full_text_parts: list[str] = []
+            sequence = 0
+            _safe_stream_callback(stream_callback, "", {**(stream_meta or {}), "event": "started", "sequence": 0})
+            for chunk in stream:
+                delta = _extract_stream_delta(chunk)
+                if not delta:
+                    continue
+                sequence += 1
+                full_text_parts.append(delta)
+                _safe_stream_callback(
+                    stream_callback,
+                    delta,
+                    {**(stream_meta or {}), "event": "delta", "sequence": sequence},
+                )
+            elapsed = time.monotonic() - started_at
+            raw_text = "".join(full_text_parts)
+            parsed = _parse_llm_response_to_dict(raw_text)
+            parsed["_streaming_used"] = True
+            parsed["_fallback_used"] = False
+            parsed["_chunk_count"] = sequence
+            _safe_stream_callback(
+                stream_callback,
+                "",
+                {
+                    **(stream_meta or {}),
+                    "event": "completed",
+                    "sequence": sequence,
+                    "final_parse_status": "success",
+                    "elapsed_ms": int(elapsed * 1000),
+                },
+            )
+            print(
+                f"[LLM Service] OpenAI-compatible stream completed model='{model_name}' "
+                f"chunks={sequence} elapsed={elapsed:.2f}s."
+            )
+            return parsed
+        except Exception as exc:
+            _safe_stream_callback(
+                stream_callback,
+                "",
+                {
+                    **(stream_meta or {}),
+                    "event": "failed",
+                    "sequence": 0,
+                    "error_message": str(exc),
+                    "will_retry": True,
+                },
+            )
+            print(f"[LLM Service] Streaming failed; falling back to non-streaming request: {exc}")
+            completion_kwargs.pop("stream", None)
+
     completion = client.chat.completions.create(**completion_kwargs)
     elapsed = time.monotonic() - started_at
     print(
@@ -520,4 +704,21 @@ def _call_openai_raw(
     )
     
     # Use robust parsing for production design calls
-    return _parse_llm_response_to_dict(completion)
+    parsed = _parse_llm_response_to_dict(completion)
+    if stream_enabled:
+        _safe_stream_callback(
+            stream_callback,
+            "",
+            {
+                **(stream_meta or {}),
+                "event": "completed",
+                "sequence": 0,
+                "final_parse_status": "success",
+                "fallback_used": True,
+                "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+            },
+        )
+    parsed["_streaming_used"] = False
+    parsed["_fallback_used"] = bool(stream_enabled)
+    parsed["_chunk_count"] = 0
+    return parsed

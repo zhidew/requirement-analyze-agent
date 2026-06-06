@@ -10,6 +10,7 @@ class EventModel(BaseModel):
     event_type: str = Field(description="Discriminator for the structured SSE event.")
     run_id: str = Field(description="Stable run identifier shared by all events in a single execution.")
     timestamp: str = Field(description="UTC ISO-8601 timestamp when the event was produced.")
+    schema_version: int = Field(default=1, description="Structured event schema version.")
 
 
 class NodeStartedEvent(EventModel):
@@ -31,6 +32,59 @@ class TextDeltaEvent(EventModel):
     node_type: str = Field(description="Node type or agent type emitting the text delta.")
     stream_name: Literal["history", "stdout", "stderr"] = Field(description="Named text stream channel.")
     delta: str = Field(description="Incremental text payload for the stream.")
+
+
+class LlmStreamStartedEvent(EventModel):
+    event_type: Literal["llm_stream_started"] = "llm_stream_started"
+    call_id: str = Field(description="Stable LLM call identifier.")
+    node_id: str = Field(description="Stable node identifier associated with the LLM call.")
+    node_type: str = Field(description="Node type or agent type associated with the LLM call.")
+    provider: str = Field(description="LLM provider or compatible gateway.")
+    model: str = Field(description="Model name used for the call.")
+    attempt: int = Field(description="One-based LLM retry attempt.")
+    call_purpose: str = Field(default="generation", description="Semantic purpose of the LLM call.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional non-sensitive stream metadata.")
+
+
+class LlmStreamDeltaEvent(EventModel):
+    event_type: Literal["llm_stream_delta"] = "llm_stream_delta"
+    call_id: str = Field(description="Stable LLM call identifier.")
+    node_id: str = Field(description="Stable node identifier associated with the LLM call.")
+    node_type: str = Field(description="Node type or agent type associated with the LLM call.")
+    provider: str = Field(description="LLM provider or compatible gateway.")
+    model: str = Field(description="Model name used for the call.")
+    attempt: int = Field(description="One-based LLM retry attempt.")
+    sequence: int = Field(description="One-based chunk sequence within the attempt.")
+    delta: str = Field(description="Incremental LLM text payload.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional non-sensitive stream metadata.")
+
+
+class LlmStreamCompletedEvent(EventModel):
+    event_type: Literal["llm_stream_completed"] = "llm_stream_completed"
+    call_id: str = Field(description="Stable LLM call identifier.")
+    node_id: str = Field(description="Stable node identifier associated with the LLM call.")
+    node_type: str = Field(description="Node type or agent type associated with the LLM call.")
+    provider: str = Field(description="LLM provider or compatible gateway.")
+    model: str = Field(description="Model name used for the call.")
+    attempt: int = Field(description="One-based LLM retry attempt.")
+    sequence: int = Field(default=0, description="Last emitted chunk sequence.")
+    final_parse_status: str = Field(default="pending", description="Status of final JSON parsing after raw stream completion.")
+    fallback_used: bool = Field(default=False, description="Whether this call fell back from streaming to non-streaming.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional non-sensitive stream metadata.")
+
+
+class LlmStreamFailedEvent(EventModel):
+    event_type: Literal["llm_stream_failed"] = "llm_stream_failed"
+    call_id: str = Field(description="Stable LLM call identifier.")
+    node_id: str = Field(description="Stable node identifier associated with the LLM call.")
+    node_type: str = Field(description="Node type or agent type associated with the LLM call.")
+    provider: str = Field(description="LLM provider or compatible gateway.")
+    model: str = Field(description="Model name used for the call.")
+    attempt: int = Field(description="One-based LLM retry attempt.")
+    sequence: int = Field(default=0, description="Last emitted chunk sequence before failure.")
+    error_message: str = Field(description="Failure reason for the LLM stream attempt.")
+    will_retry: bool = Field(default=False, description="Whether the caller will retry or fall back.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional non-sensitive stream metadata.")
 
 
 class ArtifactUpdatedEvent(EventModel):
@@ -90,6 +144,10 @@ StructuredEvent = Union[
     NodeStartedEvent,
     NodeCompletedEvent,
     TextDeltaEvent,
+    LlmStreamStartedEvent,
+    LlmStreamDeltaEvent,
+    LlmStreamCompletedEvent,
+    LlmStreamFailedEvent,
     ArtifactUpdatedEvent,
     ArtifactGovernanceReviewableEvent,
     ToolEvent,
@@ -103,6 +161,10 @@ EVENT_MODEL_BY_TYPE = {
     "node_started": NodeStartedEvent,
     "node_completed": NodeCompletedEvent,
     "text_delta": TextDeltaEvent,
+    "llm_stream_started": LlmStreamStartedEvent,
+    "llm_stream_delta": LlmStreamDeltaEvent,
+    "llm_stream_completed": LlmStreamCompletedEvent,
+    "llm_stream_failed": LlmStreamFailedEvent,
     "artifact_updated": ArtifactUpdatedEvent,
     "artifact_governance_reviewable": ArtifactGovernanceReviewableEvent,
     "tool_event": ToolEvent,

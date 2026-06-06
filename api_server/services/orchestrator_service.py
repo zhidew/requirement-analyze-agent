@@ -18,7 +18,15 @@ from services.log_service import format_run_log_entry, get_run_log, run_log_dedu
 from services.db_service import JSON_UNSET, metadata_db
 from services.artifact_governance_runtime import finalize_expert_artifact_outputs
 from services.design_artifact_service import sync_artifacts_from_disk
-from services.llm_service import resolve_runtime_llm_settings, test_llm_connectivity
+from services.llm_service import (
+    current_job_id,
+    current_node_type,
+    current_run_id,
+    current_stream_callback,
+    current_streaming_enabled,
+    resolve_runtime_llm_settings,
+    test_llm_connectivity,
+)
 from registry.expert_registry import ExpertRegistry
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -784,10 +792,11 @@ def _ensure_job(job_id: str) -> dict:
         existing.setdefault("logs", [])
         existing.setdefault("events", [])
         existing.setdefault("subscribers", set())
+        existing.setdefault("subscriber_loops", {})
         existing.setdefault("status", RUN_STATUS_QUEUED)
         return existing
 
-    jobs[job_id] = {"status": RUN_STATUS_QUEUED, "logs": [], "events": [], "subscribers": set()}
+    jobs[job_id] = {"status": RUN_STATUS_QUEUED, "logs": [], "events": [], "subscribers": set(), "subscriber_loops": {}}
     return jobs[job_id]
 
 
@@ -1691,13 +1700,25 @@ def _publish_event(job_id: str, payload: dict) -> dict:
 
     stale_subscribers = []
     for subscriber in job["subscribers"]:
+        loop = job.get("subscriber_loops", {}).get(subscriber)
         try:
-            subscriber.put_nowait(serialized)
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                running_loop = None
+            if loop is not None and loop is not running_loop:
+                if loop.is_closed():
+                    stale_subscribers.append(subscriber)
+                else:
+                    loop.call_soon_threadsafe(subscriber.put_nowait, serialized)
+            else:
+                subscriber.put_nowait(serialized)
         except Exception:
             stale_subscribers.append(subscriber)
 
     for subscriber in stale_subscribers:
         job["subscribers"].discard(subscriber)
+        job.get("subscriber_loops", {}).pop(subscriber, None)
 
     return serialized
 
@@ -1904,6 +1925,221 @@ def _emit_artifact_governance_reviewable(
             "timestamp": _now_iso(),
         },
     )
+
+
+def _emit_llm_stream_started(
+    job_id: str,
+    run_id: str,
+    node_id: str,
+    node_type: str,
+    call_id: str,
+    provider: str,
+    model: str,
+    attempt: int,
+    call_purpose: str = "generation",
+    metadata: dict | None = None,
+):
+    _publish_event(
+        job_id,
+        {
+            "event_id": _new_event_id(),
+            "event_type": "llm_stream_started",
+            "run_id": run_id,
+            "node_id": node_id,
+            "node_type": node_type,
+            "call_id": call_id,
+            "provider": provider,
+            "model": model,
+            "attempt": attempt,
+            "call_purpose": call_purpose,
+            "metadata": metadata or {},
+            "timestamp": _now_iso(),
+        },
+    )
+
+
+def _emit_llm_stream_delta(
+    job_id: str,
+    run_id: str,
+    node_id: str,
+    node_type: str,
+    call_id: str,
+    provider: str,
+    model: str,
+    attempt: int,
+    sequence: int,
+    delta: str,
+    metadata: dict | None = None,
+):
+    _publish_event(
+        job_id,
+        {
+            "event_id": _new_event_id(),
+            "event_type": "llm_stream_delta",
+            "run_id": run_id,
+            "node_id": node_id,
+            "node_type": node_type,
+            "call_id": call_id,
+            "provider": provider,
+            "model": model,
+            "attempt": attempt,
+            "sequence": sequence,
+            "delta": delta,
+            "metadata": metadata or {},
+            "timestamp": _now_iso(),
+        },
+    )
+
+
+def _emit_llm_stream_completed(
+    job_id: str,
+    run_id: str,
+    node_id: str,
+    node_type: str,
+    call_id: str,
+    provider: str,
+    model: str,
+    attempt: int,
+    sequence: int,
+    final_parse_status: str = "success",
+    fallback_used: bool = False,
+    metadata: dict | None = None,
+):
+    _publish_event(
+        job_id,
+        {
+            "event_id": _new_event_id(),
+            "event_type": "llm_stream_completed",
+            "run_id": run_id,
+            "node_id": node_id,
+            "node_type": node_type,
+            "call_id": call_id,
+            "provider": provider,
+            "model": model,
+            "attempt": attempt,
+            "sequence": sequence,
+            "final_parse_status": final_parse_status,
+            "fallback_used": fallback_used,
+            "metadata": metadata or {},
+            "timestamp": _now_iso(),
+        },
+    )
+
+
+def _emit_llm_stream_failed(
+    job_id: str,
+    run_id: str,
+    node_id: str,
+    node_type: str,
+    call_id: str,
+    provider: str,
+    model: str,
+    attempt: int,
+    sequence: int,
+    error_message: str,
+    will_retry: bool = False,
+    metadata: dict | None = None,
+):
+    _publish_event(
+        job_id,
+        {
+            "event_id": _new_event_id(),
+            "event_type": "llm_stream_failed",
+            "run_id": run_id,
+            "node_id": node_id,
+            "node_type": node_type,
+            "call_id": call_id,
+            "provider": provider,
+            "model": model,
+            "attempt": attempt,
+            "sequence": sequence,
+            "error_message": error_message,
+            "will_retry": will_retry,
+            "metadata": metadata or {},
+            "timestamp": _now_iso(),
+        },
+    )
+
+
+def create_llm_stream_callback(job_id: str, run_id: str, default_node_type: str | None = None):
+    def _callback(delta: str, meta: dict):
+        try:
+            event_kind = str(meta.get("event") or "delta")
+            resolved_job_id = str(meta.get("job_id") or job_id)
+            resolved_run_id = str(meta.get("run_id") or run_id)
+            node_id = str(meta.get("node_id") or default_node_type or "unknown")
+            node_type = str(meta.get("node_type") or default_node_type or node_id)
+            call_id = str(meta.get("call_id") or f"llm_call_{resolved_run_id}")
+            provider = str(meta.get("provider") or "openai")
+            model = str(meta.get("model") or "")
+            attempt = int(meta.get("attempt") or 1)
+            sequence = int(meta.get("sequence") or 0)
+            metadata = {
+                k: v
+                for k, v in meta.items()
+                if k not in {"event", "job_id", "run_id", "node_id", "node_type", "call_id", "provider", "model", "attempt", "sequence"}
+            }
+            if event_kind == "started":
+                _emit_llm_stream_started(
+                    resolved_job_id,
+                    resolved_run_id,
+                    node_id,
+                    node_type,
+                    call_id,
+                    provider,
+                    model,
+                    attempt,
+                    call_purpose=str(meta.get("call_purpose") or "generation"),
+                    metadata=metadata,
+                )
+            elif event_kind == "completed":
+                _emit_llm_stream_completed(
+                    resolved_job_id,
+                    resolved_run_id,
+                    node_id,
+                    node_type,
+                    call_id,
+                    provider,
+                    model,
+                    attempt,
+                    sequence,
+                    final_parse_status=str(meta.get("final_parse_status") or "success"),
+                    fallback_used=bool(meta.get("fallback_used")),
+                    metadata=metadata,
+                )
+            elif event_kind == "failed":
+                _emit_llm_stream_failed(
+                    resolved_job_id,
+                    resolved_run_id,
+                    node_id,
+                    node_type,
+                    call_id,
+                    provider,
+                    model,
+                    attempt,
+                    sequence,
+                    error_message=str(meta.get("error_message") or "LLM stream failed."),
+                    will_retry=bool(meta.get("will_retry")),
+                    metadata=metadata,
+                )
+            else:
+                _emit_llm_stream_delta(
+                    resolved_job_id,
+                    resolved_run_id,
+                    node_id,
+                    node_type,
+                    call_id,
+                    provider,
+                    model,
+                    attempt,
+                    sequence,
+                    delta,
+                    metadata=metadata,
+                )
+        except Exception as exc:
+            print(f"[Orchestrator] Ignored LLM stream event publish failure: {exc}")
+
+    return _callback
 
 
 def _record_artifact_governance_summary(
@@ -2453,17 +2689,31 @@ async def run_orchestrator_task(
         pause_node = None
         pause_reason = None
         pause_interrupt = None
-        async with _graph_for_run() as design_graph:
-            async for event in design_graph.astream(initial_state, config=config, stream_mode="updates"):
-                for node_name, output in event.items():
-                    print(f"[DEBUG] Node {node_name} yielded an update event.")
-                    payload = _record_graph_event(project_id, version, node_name, output, job_id=job_id)
-                    if payload.get("human_intervention_required"):
-                        paused_for_human = True
-                        pause_node = node_name
-                        pause_reason = payload.get("waiting_reason")
-                        pause_interrupt = payload.get("pending_interrupt")
-                    known_artifacts = _handle_structured_graph_event(job_id, project_id, version, node_name, payload, known_artifacts)
+        runtime_llm_settings = resolve_runtime_llm_settings(initial_state.get("design_context"))
+        streaming_enabled = bool((runtime_llm_settings or {}).get("streaming_enabled")) or os.getenv("LLM_STREAMING_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+        stream_callback = create_llm_stream_callback(job_id, job_id)
+        context_tokens = [
+            (current_job_id, current_job_id.set(job_id)),
+            (current_run_id, current_run_id.set(job_id)),
+            (current_node_type, current_node_type.set(None)),
+            (current_streaming_enabled, current_streaming_enabled.set(streaming_enabled)),
+            (current_stream_callback, current_stream_callback.set(stream_callback)),
+        ]
+        try:
+            async with _graph_for_run() as design_graph:
+                async for event in design_graph.astream(initial_state, config=config, stream_mode="updates"):
+                    for node_name, output in event.items():
+                        print(f"[DEBUG] Node {node_name} yielded an update event.")
+                        payload = _record_graph_event(project_id, version, node_name, output, job_id=job_id)
+                        if payload.get("human_intervention_required"):
+                            paused_for_human = True
+                            pause_node = node_name
+                            pause_reason = payload.get("waiting_reason")
+                            pause_interrupt = payload.get("pending_interrupt")
+                        known_artifacts = _handle_structured_graph_event(job_id, project_id, version, node_name, payload, known_artifacts)
+        finally:
+            for variable, token in reversed(context_tokens):
+                variable.reset(token)
 
         # FINAL STATE GUARD: if the graph exits with unfinished tasks, mark the run failed
         # instead of leaving the workflow projection stuck in a pseudo-running state.
@@ -3631,13 +3881,19 @@ def get_job_events(job_id: str) -> list[dict]:
 
 def subscribe_job_events(job_id: str) -> asyncio.Queue:
     queue: asyncio.Queue = asyncio.Queue()
-    _ensure_job(job_id)["subscribers"].add(queue)
+    job = _ensure_job(job_id)
+    job["subscribers"].add(queue)
+    try:
+        job.setdefault("subscriber_loops", {})[queue] = asyncio.get_running_loop()
+    except RuntimeError:
+        job.setdefault("subscriber_loops", {})[queue] = None
     return queue
 
 
 def unsubscribe_job_events(job_id: str, queue: asyncio.Queue):
     if job_id in jobs:
         jobs[job_id]["subscribers"].discard(queue)
+        jobs[job_id].get("subscriber_loops", {}).pop(queue, None)
 
 
 def list_projects():

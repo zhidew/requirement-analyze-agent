@@ -244,6 +244,7 @@ def save_llm_interaction(
     error: str | None = None,
     include_full_artifacts: bool = False,
     persist_payload_files: bool = True,
+    metadata: dict | None = None,
 ):
     """
     ULTIMATE OPTIMIZATION WITH CHRONOLOGICAL FILENAMES:
@@ -315,6 +316,7 @@ def save_llm_interaction(
                 "response": redact_sensitive_payload(res_summary)
             },
             "error": error,
+            "metadata": redact_sensitive_payload(metadata or {}),
             "payload_files_persisted": persist_payload_files,
             "payload_file_limits": payload_file_limits,
         }

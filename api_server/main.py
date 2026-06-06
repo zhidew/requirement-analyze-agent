@@ -118,11 +118,21 @@ async def get_job_status_stream(request: Request, job_id: str):
     async def event_generator():
         queue = None
         backlog = orch.get_job_events(job_id)
+        last_event_id = request.headers.get("Last-Event-ID") or request.headers.get("last-event-id")
+        replay_started = last_event_id in (None, "")
         for payload in backlog:
+            if not replay_started:
+                replay_started = payload.get("event_id") == last_event_id
+                continue
             if await request.is_disconnected():
                 return
             event = validate_event_payload(payload)
-            yield {"event": event.event_type, "data": json.dumps(dump_event(event), ensure_ascii=False)}
+            yield {
+                "event": event.event_type,
+                "id": event.event_id,
+                "retry": 3000,
+                "data": json.dumps(dump_event(event), ensure_ascii=False),
+            }
 
         queue = orch.subscribe_job_events(job_id)
         try:
@@ -136,7 +146,12 @@ async def get_job_status_stream(request: Request, job_id: str):
                     continue
 
                 event = validate_event_payload(payload)
-                yield {"event": event.event_type, "data": json.dumps(dump_event(event), ensure_ascii=False)}
+                yield {
+                    "event": event.event_type,
+                    "id": event.event_id,
+                    "retry": 3000,
+                    "data": json.dumps(dump_event(event), ensure_ascii=False),
+                }
 
                 if event.event_type in {"run_completed", "run_failed"}:
                     break
