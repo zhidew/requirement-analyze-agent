@@ -66,7 +66,7 @@ def _get_llm_request_timeout_seconds() -> float:
 
 
 def _get_llm_connectivity_timeout_seconds() -> float:
-    return _resolve_nonnegative_float_env("LLM_CONNECTIVITY_TIMEOUT_SECONDS", 15.0)
+    return _resolve_nonnegative_float_env("LLM_CONNECTIVITY_TIMEOUT_SECONDS", 60.0)
 
 
 def _get_llm_connectivity_max_tokens() -> int:
