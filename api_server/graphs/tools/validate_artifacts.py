@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -62,7 +63,35 @@ MERMAID_DIAGRAM_PREFIXES = (
     "c4component",
     "c4dynamic",
     "c4deployment",
+    "gitgraph",
+    "architecture-beta",
+    "block-beta",
+    "packet-beta",
+    "sankey-beta",
+    "xychart-beta",
 )
+MERMAID_FENCE_RE = re.compile(r"```mermaid\s*\n(.*?)\n```", re.IGNORECASE | re.DOTALL)
+MERMAID_PARSE_SCRIPT = r"""
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
+
+const chart = readFileSync(0, 'utf8');
+const dom = new JSDOM('<!doctype html><html><body></body></html>');
+Object.defineProperty(globalThis, 'window', { value: dom.window, configurable: true });
+Object.defineProperty(globalThis, 'document', { value: dom.window.document, configurable: true });
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true });
+
+const mermaid = (await import('mermaid')).default;
+mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });
+
+try {
+  await mermaid.parse(chart);
+  process.stdout.write(JSON.stringify({ ok: true }));
+} catch (err) {
+  process.stdout.write(JSON.stringify({ ok: false, message: String(err?.message || err) }));
+  process.exitCode = 1;
+}
+"""
 
 
 @dataclass
@@ -134,7 +163,7 @@ def validate_artifacts(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, 
         "checked_files": checked_files,
         "summary": _summarize_findings(findings),
         "limitations": [
-            "Mermaid checks are heuristic smoke tests in this first version; they do not execute the frontend renderer.",
+            "Mermaid checks execute the installed frontend Mermaid parser when admin-ui dependencies are available; otherwise they fall back to heuristic smoke tests.",
             "Near-duplicate detection is section-level and markdown-focused; it does not yet rewrite or relocate content automatically.",
         ],
         "findings": findings,
@@ -444,7 +473,8 @@ def _validate_mermaid_blocks(content: str, display_path: str, owner_expert: Opti
     mermaid_blocks = _extract_mermaid_blocks(content)
 
     for index, block in enumerate(mermaid_blocks, start=1):
-        lines = [line.rstrip() for line in block.splitlines() if line.strip()]
+        normalized_block = _normalize_mermaid_block(block)
+        lines = [line.rstrip() for line in normalized_block.splitlines() if line.strip()]
         if not lines:
             findings.append(
                 _finding(
@@ -494,6 +524,22 @@ def _validate_mermaid_blocks(content: str, display_path: str, owner_expert: Opti
                 )
             )
 
+        parse_error = _parse_mermaid_with_frontend_runtime(normalized_block)
+        if parse_error:
+            findings.append(
+                _finding(
+                    check_id="mermaid_parse_error",
+                    severity="error",
+                    file=display_path,
+                    message="Mermaid block cannot be parsed by the installed frontend Mermaid runtime.",
+                    evidence={"block_index": index, "error": _compact_mermaid_error(parse_error)},
+                    auto_fixable=False,
+                    repair_mode="llm_proposal",
+                    approval_required=True,
+                    owner_expert=owner_expert,
+                )
+            )
+
         unmatched_fence_markers = sum(1 for line in block.splitlines() if line.strip().startswith("```"))
         if unmatched_fence_markers:
             findings.append(
@@ -514,8 +560,68 @@ def _validate_mermaid_blocks(content: str, display_path: str, owner_expert: Opti
 
 
 def _extract_mermaid_blocks(content: str) -> List[str]:
-    pattern = re.compile(r"```mermaid\s*\n(.*?)\n```", re.IGNORECASE | re.DOTALL)
-    return [match.group(1) for match in pattern.finditer(content)]
+    return [match.group(1) for match in MERMAID_FENCE_RE.finditer(content)]
+
+
+def _normalize_mermaid_block(block: str) -> str:
+    text = block.replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    nested_match = MERMAID_FENCE_RE.search(text)
+    if nested_match:
+        text = nested_match.group(1).strip()
+    lines = [line for line in text.splitlines() if not line.strip().startswith("```")]
+    declaration_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip().lower().startswith(MERMAID_DIAGRAM_PREFIXES)
+        ),
+        0,
+    )
+    return "\n".join(lines[declaration_index:]).strip()
+
+
+def _parse_mermaid_with_frontend_runtime(block: str) -> Optional[str]:
+    admin_ui_dir = _find_admin_ui_dir()
+    if admin_ui_dir is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", MERMAID_PARSE_SCRIPT],
+            cwd=admin_ui_dir,
+            input=block,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode == 0:
+        return None
+    output = result.stdout.strip() or result.stderr.strip()
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return output
+    return payload.get("message") if isinstance(payload, dict) else output
+
+
+def _find_admin_ui_dir() -> Optional[Path]:
+    agent_root = Path(__file__).resolve().parents[3]
+    admin_ui_dir = agent_root / "admin-ui"
+    if (
+        (admin_ui_dir / "package.json").exists()
+        and (admin_ui_dir / "node_modules" / "mermaid").exists()
+        and (admin_ui_dir / "node_modules" / "jsdom").exists()
+    ):
+        return admin_ui_dir
+    return None
+
+
+def _compact_mermaid_error(error: str) -> str:
+    lines = [line.rstrip() for line in error.splitlines() if line.strip()]
+    return "\n".join(lines[:8])[:1200]
 
 
 def _extract_markdown_sections(content: str) -> List[Dict[str, Any]]:

@@ -4,11 +4,27 @@ import { useTranslation } from 'react-i18next';
 import { Loader as LucideLoader, Maximize2, Copy, Check, X, FileText } from 'lucide-react';
 
 mermaid.initialize({
-  startOnLoad: true,
+  startOnLoad: false,
   theme: 'default',
   securityLevel: 'loose',
   fontFamily: 'ui-sans-serif, system-ui, sans-serif',
 });
+
+const DIAGRAM_DECLARATION_RE = /^\s*(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|quadrantChart|requirementDiagram|c4Context|c4Container|c4Component|c4Dynamic|c4Deployment|gitGraph|architecture-beta|block-beta|packet-beta|sankey-beta|xychart-beta)\b/i;
+
+const normalizeMermaidChart = (source: string) => {
+  let text = source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+  const fencedMatch = text.match(/```mermaid\s*\n([\s\S]*?)\n```/i);
+  if (fencedMatch) {
+    text = fencedMatch[1].trim();
+  }
+
+  const lines = text
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('```'));
+  const declarationIndex = lines.findIndex((line) => DIAGRAM_DECLARATION_RE.test(line));
+  return (declarationIndex >= 0 ? lines.slice(declarationIndex) : lines).join('\n').trim();
+};
 
 export const Mermaid = ({ chart }: { chart: string }) => {
   const { t } = useTranslation();
@@ -16,16 +32,19 @@ export const Mermaid = ({ chart }: { chart: string }) => {
   const [error, setError] = useState<string | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const [copied, setCopied] = useState(false);
+  const normalizedChart = normalizeMermaidChart(chart);
 
   useEffect(() => {
     let isMounted = true;
     
     const renderChart = async () => {
-      if (!chart) return;
+      setSvg('');
+      setError(null);
+      if (!normalizedChart) return;
       
       try {
         const id = `mermaid-${Math.random().toString(36).substr(2, 9)}`;
-        const { svg: renderedSvg } = await mermaid.render(id, chart);
+        const { svg: renderedSvg } = await mermaid.render(id, normalizedChart);
         
         if (isMounted) {
           setSvg(renderedSvg);
@@ -41,10 +60,10 @@ export const Mermaid = ({ chart }: { chart: string }) => {
 
     void renderChart();
     return () => { isMounted = false; };
-  }, [chart, t]);
+  }, [normalizedChart, t]);
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(chart);
+    void navigator.clipboard.writeText(normalizedChart || chart);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -59,7 +78,7 @@ export const Mermaid = ({ chart }: { chart: string }) => {
           </button>
         </div>
         <pre className="bg-gray-100 p-4 rounded-b overflow-x-auto text-xs border-x border-b border-gray-200 text-gray-900 font-mono leading-relaxed">
-          <code>{chart}</code>
+          <code>{normalizedChart || chart}</code>
         </pre>
       </div>
     );
