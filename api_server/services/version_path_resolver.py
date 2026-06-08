@@ -13,7 +13,7 @@ def version_relative_path(project_id: str, version_id: str, version_record: dict
         temp_path = str(temp_version.get("temp_path") or "").strip()
         if temp_path:
             return temp_path
-        return f"projects/{project_id}/temp/version-snapshots/{version_id}"
+        return f"projects/{project_id}/temp/{version_id}"
 
     requirement_id = str(version.get("requirement_id") or "").strip()
     if requirement_id:
@@ -29,10 +29,16 @@ def resolve_version_path(project_id: str, version_id: str) -> Path:
         temp_path = str(temp_version.get("temp_path") or "").strip()
         if temp_path:
             return BASE_DIR / temp_path
+        direct_temp_path = PROJECTS_DIR / project_id / "temp" / version_id
+        if direct_temp_path.exists():
+            return direct_temp_path
         legacy_path = PROJECTS_DIR / project_id / version_id
         if legacy_path.exists():
             return legacy_path
-        return PROJECTS_DIR / project_id / "temp" / "version-snapshots" / version_id
+        legacy_snapshot_path = PROJECTS_DIR / project_id / "temp" / "version-snapshots" / version_id
+        if legacy_snapshot_path.exists():
+            return legacy_snapshot_path
+        return direct_temp_path
 
     requirement_id = str(version.get("requirement_id") or "").strip()
     if requirement_id:

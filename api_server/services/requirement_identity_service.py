@@ -54,7 +54,7 @@ def _version_dir(project_id: str, version_id: str) -> Path:
 def _planned_version_relative_path(project_id: str, version_id: str, requirement_id: Optional[str]) -> str:
     if requirement_id:
         return f"projects/{project_id}/{requirement_id}/{version_id}"
-    return f"projects/{project_id}/temp/version-snapshots/{version_id}"
+    return f"projects/{project_id}/temp/{version_id}"
 
 
 def _manifest_payload(version_record: Dict[str, Any], *, status: Optional[str] = None) -> Dict[str, Any]:
