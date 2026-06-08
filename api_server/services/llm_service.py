@@ -432,10 +432,6 @@ def _clean_json_response(text: str) -> str:
     if not isinstance(text, str):
         text = str(text)
     text = text.strip()
-    
-    # Handle SSE 'data:' prefix if the whole string is prefixed
-    if text.startswith("data:"):
-        text = text[5:].strip()
 
     # Only remove ``` wrapper if it wraps the ENTIRE string
     if text.startswith("```"):
@@ -452,18 +448,135 @@ def _clean_json_response(text: str) -> str:
         
     return text.strip()
 
+def _extract_sse_data_payloads(text: str) -> list[str]:
+    payloads: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(":"):
+            continue
+        if stripped.startswith("data:"):
+            payload = stripped[5:].strip()
+            if payload and payload != "[DONE]":
+                payloads.append(payload)
+    return payloads
+
+def _extract_openai_payload_content(payload: dict) -> str | None:
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices:
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        delta = choice.get("delta") if isinstance(choice, dict) else {}
+        if isinstance(delta, dict) and delta.get("content") is not None:
+            return str(delta.get("content"))
+        message = choice.get("message") if isinstance(choice, dict) else {}
+        if isinstance(message, dict) and message.get("content") is not None:
+            return str(message.get("content"))
+        if isinstance(choice, dict) and choice.get("text") is not None:
+            return str(choice.get("text"))
+    if payload.get("type") in {"response.output_text.delta", "response.output_text.done"}:
+        value = payload.get("delta", payload.get("text"))
+        if value is not None:
+            return str(value)
+    return None
+
+def _decode_sse_response_text(text: str) -> str:
+    payloads = _extract_sse_data_payloads(text)
+    if not payloads:
+        return text
+
+    content_parts: list[str] = []
+    direct_json_payloads: list[str] = []
+    for payload in payloads:
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            content_parts.append(payload)
+            continue
+
+        if isinstance(data, dict):
+            content = _extract_openai_payload_content(data)
+            if content is not None:
+                content_parts.append(content)
+            elif "choices" not in data:
+                direct_json_payloads.append(json.dumps(data, ensure_ascii=False))
+
+    if content_parts:
+        return "".join(content_parts)
+    if direct_json_payloads:
+        return direct_json_payloads[-1]
+    return "\n".join(payloads)
+
+def _extract_first_json_object(text: str) -> dict | None:
+    in_string = False
+    escaped = False
+    start_index: int | None = None
+    depth = 0
+
+    for index, char in enumerate(text):
+        if start_index is None:
+            if char == "{":
+                start_index = index
+                depth = 1
+                in_string = False
+                escaped = False
+            continue
+
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start_index:index + 1]
+                try:
+                    data = json.loads(candidate)
+                except json.JSONDecodeError:
+                    start_index = None
+                    continue
+                if isinstance(data, dict):
+                    return data
+                start_index = None
+    return None
+
+def _loads_llm_json_dict(text: str) -> dict:
+    normalized = _clean_json_response(_decode_sse_response_text(text))
+    if not normalized:
+        raise json.JSONDecodeError(
+            f"LLM response text was empty after cleanup. Raw preview: {_summarize_completion(text)}",
+            text,
+            0,
+        )
+    try:
+        data = json.loads(normalized)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+
+    extracted = _extract_first_json_object(normalized)
+    if extracted is not None:
+        return extracted
+    return json.loads(normalized)
+
 def _parse_llm_response_to_dict(completion) -> dict:
     """
     Robustly extracts the JSON dictionary from an LLM completion object or string.
     Handles standard OpenAI objects, SSE-prefixed strings, and raw JSON strings.
     """
-    import json
-    
     # 1. Try standard access (OpenAI SDK Object)
     if hasattr(completion, "choices") and completion.choices:
         content = completion.choices[0].message.content
         if content:
-            return json.loads(_clean_json_response(content))
+            return _loads_llm_json_dict(content)
         raise json.JSONDecodeError(
             f"LLM returned empty message.content. Completion preview: {_summarize_completion(completion)}",
             "",
@@ -472,9 +585,6 @@ def _parse_llm_response_to_dict(completion) -> dict:
             
     # 2. Handle string or dict-like responses
     raw_text = str(completion).strip()
-    if raw_text.startswith("data:"):
-        raw_text = raw_text[5:].strip()
-
     if not raw_text:
         raise json.JSONDecodeError("LLM returned an empty response body.", "", 0)
         
@@ -486,10 +596,10 @@ def _parse_llm_response_to_dict(completion) -> dict:
             if "choices" in data and data["choices"]:
                 choice = data["choices"][0]
                 if isinstance(choice, dict):
-                    msg = choice.get("message", {})
+                    msg = choice.get("message", {}) 
                     content = msg.get("content", "") if isinstance(msg, dict) else ""
                     if content:
-                        return json.loads(_clean_json_response(content))
+                        return _loads_llm_json_dict(content)
                     raise json.JSONDecodeError(
                         f"LLM response JSON had empty choices[0].message.content. Response preview: {_summarize_completion(data)}",
                         raw_text,
@@ -501,14 +611,7 @@ def _parse_llm_response_to_dict(completion) -> dict:
         pass
         
     # 3. Last resort: treat the raw text as the JSON content directly
-    cleaned = _clean_json_response(raw_text)
-    if not cleaned:
-        raise json.JSONDecodeError(
-            f"LLM response text was empty after cleanup. Raw preview: {_summarize_completion(raw_text)}",
-            raw_text,
-            0,
-        )
-    return json.loads(cleaned)
+    return _loads_llm_json_dict(raw_text)
 
 def _build_connectivity_probe_prompts() -> tuple[str, str]:
     system_prompt = (
