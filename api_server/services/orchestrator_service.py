@@ -142,6 +142,43 @@ def _is_project_internal_dir_name(name: str) -> bool:
     return name.startswith(".") or name in RESERVED_PROJECT_DIR_NAMES
 
 
+def _is_version_dir_name(name: str) -> bool:
+    return bool(re.match(r"^v\d{8,}$", str(name or "").strip()))
+
+
+def _is_version_run_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if _is_version_dir_name(path.name):
+        return True
+    return any((path / child).exists() for child in ("manifest.json", "baseline", "artifacts", "logs"))
+
+
+def _sync_legacy_version_dirs(project_id: str) -> None:
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.exists():
+        return
+
+    for entry in proj_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        if _is_project_internal_dir_name(entry.name):
+            if metadata_db.get_version(project_id, entry.name):
+                metadata_db.delete_version(project_id, entry.name)
+            continue
+        if _is_version_run_dir(entry):
+            if not metadata_db.get_version(project_id, entry.name):
+                metadata_db.upsert_version(project_id, entry.name, "", "unknown")
+            continue
+
+        # With the RR/IR directory layout, a first-level non-version directory is
+        # a requirement-id container. Older sync logic may have inserted it as a
+        # legacy version; remove that bogus row when encountered.
+        existing = metadata_db.get_version(project_id, entry.name)
+        if existing and not _is_version_run_dir(entry):
+            metadata_db.delete_version(project_id, entry.name)
+
+
 @contextmanager
 def _graph_for_state():
     CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -4070,18 +4107,7 @@ def create_project(project_id: str, name: Optional[str] = None, description: Opt
 
 
 def list_versions(project_id: str, page: int = 1, page_size: int = 10):
-    # Sync versions from disk to DB if they don't exist
-    proj_dir = PROJECTS_DIR / project_id
-    if proj_dir.exists():
-        for d in proj_dir.iterdir():
-            if d.is_dir():
-                if _is_project_internal_dir_name(d.name):
-                    if metadata_db.get_version(project_id, d.name):
-                        metadata_db.delete_version(project_id, d.name)
-                    continue
-                # We only sync if not in DB to avoid overwriting with generic data
-                if not metadata_db.get_version(project_id, d.name):
-                    metadata_db.upsert_version(project_id, d.name, "", "unknown")
+    _sync_legacy_version_dirs(project_id)
     
     return metadata_db.list_versions(project_id, page, page_size)
 
