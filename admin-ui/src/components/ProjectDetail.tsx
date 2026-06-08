@@ -2670,7 +2670,9 @@ export function ProjectDetail() {
                       {group.label}
                     </div>
                   </div>
-                  {group.versions.map((version) => renderVersionRow(version))}
+                  <div className="ml-3 space-y-2 border-l border-gray-200 pl-3">
+                    {group.versions.map((version) => renderVersionRow(version))}
+                  </div>
                 </div>
               ))}
             </div>
