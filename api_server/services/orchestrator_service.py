@@ -36,6 +36,12 @@ EXPERTS_DIR = BASE_DIR / "experts"
 LEGACY_SUBAGENTS_DIR = BASE_DIR / "subagents"
 SKILLS_DIR = BASE_DIR / "skills"
 EXPERT_CENTER_VERSIONS_DIR = BASE_DIR / ".expert-center-versions"
+PRIMARY_REQUIREMENT_BASELINE_FILE = "raw-requirements.md"
+COMPATIBLE_REQUIREMENT_BASELINE_FILES = (
+    PRIMARY_REQUIREMENT_BASELINE_FILE,
+    "original-requirements.md",
+    "input-requirements.md",
+)
 
 RUN_STATUS_QUEUED = "queued"
 RUN_STATUS_RUNNING = "running"
@@ -658,7 +664,7 @@ def _load_persisted_requirement_text(project_id: str, version: str, fallback: st
         return version_requirement
 
     baseline_dir = PROJECTS_DIR / project_id / version / "baseline"
-    for filename in ("raw-requirements.md", "original-requirements.md"):
+    for filename in COMPATIBLE_REQUIREMENT_BASELINE_FILES:
         path = baseline_dir / filename
         if path.exists():
             try:
@@ -694,13 +700,12 @@ def _write_requirement_baseline_files(
         return
     baseline_dir = PROJECTS_DIR / project_id / version / "baseline"
     baseline_dir.mkdir(parents=True, exist_ok=True)
-    for filename in ("raw-requirements.md", "original-requirements.md"):
-        path = baseline_dir / filename
-        try:
-            if overwrite or not path.exists() or not path.read_text(encoding="utf-8").strip():
-                path.write_text(normalized_requirement, encoding="utf-8")
-        except OSError:
+    path = baseline_dir / PRIMARY_REQUIREMENT_BASELINE_FILE
+    try:
+        if overwrite or not path.exists() or not path.read_text(encoding="utf-8").strip():
             path.write_text(normalized_requirement, encoding="utf-8")
+    except OSError:
+        path.write_text(normalized_requirement, encoding="utf-8")
 
 
 def _build_human_answers_from_interactions(project_id: str, version: str) -> Dict[str, List[Dict[str, Any]]]:
