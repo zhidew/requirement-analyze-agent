@@ -77,6 +77,7 @@
     "activeProject": "Active Workspace",
     "newDesignRun": "New Analysis Session",
     "startDesign": "Launch Analysis",
+    "requirementIdLabel": "RR_ID (optional)",
     "uploadIR": "RR Requirement Document",
     "uploadCompetitor": "Competitor Analysis Materials",
     "executionPipeline": "Orchestration Engine",

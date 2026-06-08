@@ -8,6 +8,9 @@ from typing import Any, Dict, List
 
 from .standards import resolve_path_within_root
 
+CONTENT_EXCERPT_MAX_CHARS = 2200
+CONTENT_EXCERPT_MAX_LINES = 80
+
 
 def extract_structure(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     file_paths = tool_input.get("files")
@@ -58,6 +61,7 @@ def _summarize_file(root_dir: Path, file_path: Path) -> Dict[str, Any]:
         summary["summary_type"] = "document_outline"
         summary["headings"] = headings[:12]
         summary["heading_count"] = len(headings)
+        summary["content_excerpt"] = _content_excerpt(content)
         return summary
 
     if suffix == ".json":
@@ -65,9 +69,11 @@ def _summarize_file(root_dir: Path, file_path: Path) -> Dict[str, Any]:
             parsed = json.loads(content)
         except json.JSONDecodeError:
             summary["summary_type"] = "plain_text"
+            summary["content_excerpt"] = _content_excerpt(content)
             return summary
         summary["summary_type"] = "json_keys"
         summary["top_level_keys"] = _json_keys(parsed, max_depth=2)
+        summary["content_excerpt"] = _content_excerpt(_compact_json(parsed))
         return summary
 
     if suffix == ".py":
@@ -81,7 +87,24 @@ def _summarize_file(root_dir: Path, file_path: Path) -> Dict[str, Any]:
         return summary
 
     summary["summary_type"] = "plain_text"
+    summary["content_excerpt"] = _content_excerpt(content)
     return summary
+
+
+def _content_excerpt(content: str, max_chars: int = CONTENT_EXCERPT_MAX_CHARS) -> str:
+    meaningful_lines = [line.strip() for line in content.splitlines() if line.strip()]
+    excerpt = "\n".join(meaningful_lines[:CONTENT_EXCERPT_MAX_LINES])
+    excerpt = re.sub(r"\n{3,}", "\n\n", excerpt).strip()
+    if len(excerpt) > max_chars:
+        return excerpt[:max_chars].rstrip() + "..."
+    return excerpt
+
+
+def _compact_json(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except TypeError:
+        return str(value)
 
 
 def _json_keys(value: Any, prefix: str = "", max_depth: int = 2, depth: int = 0) -> List[str]:

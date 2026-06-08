@@ -18,8 +18,12 @@ from models.project import (
     JobResponse,
     ManualArtifactRevisionRequest,
     NodeRetryRequest,
+    PrepareVersionRequest,
     ProjectCreateRequest,
     ProjectResponse,
+    RequirementItemResponse,
+    RequirementTraceResponse,
+    RequirementVersionResponse,
     RevisionMessageRequest,
     RevisionReplacementSuggestionRequest,
     RevisionPatchPreviewRequest,
@@ -28,10 +32,13 @@ from models.project import (
     ScheduleRunRequest,
     ScheduleRunResponse,
     SectionReviewRequest,
+    TempVersionBindRequest,
     VersionRunRequest,
 )
 from models.management import VersionListResponse
 import services.orchestrator_service as orch
+from services import requirement_identity_service
+from services.db_service import metadata_db
 from services import design_artifact_service as artifacts_service
 from services import context_consistency_service
 from services import decision_log_service
@@ -173,14 +180,35 @@ async def delete_project_version(project_id: str, version: str):
         raise HTTPException(status_code=409, detail="Version cannot be deleted while it is running, or it does not exist.")
     return {"success": True, "project_id": project_id, "version": version}
 
+
+@router.post("/{project_id}/versions/{version}/prepare")
+async def prepare_project_version(project_id: str, version: str, req: PrepareVersionRequest):
+    try:
+        return requirement_identity_service.prepare_version(
+            project_id,
+            version,
+            requirement_text=req.requirement_text,
+            requirement_type=req.requirement_type,
+            requirement_id=req.requirement_id,
+            source_requirement_ids=req.source_requirement_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 @router.post("/{project_id}/versions/{version}/run", response_model=JobResponse)
 async def run_design_orchestrator(project_id: str, version: str, req: VersionRunRequest):
-    run_result = orch.trigger_orchestrator(
-        project_id,
-        version,
-        req.requirement_text,
-        req.model,
-    )
+    try:
+        run_result = orch.trigger_orchestrator(
+            project_id,
+            version,
+            req.requirement_text,
+            req.model,
+            requirement_type=req.requirement_type,
+            requirement_id=req.requirement_id,
+            source_requirement_ids=req.source_requirement_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     reused = bool(run_result.get("reused_existing_job"))
     return {
         "job_id": run_result["job_id"],
@@ -199,6 +227,9 @@ async def schedule_design_orchestrator(project_id: str, version: str, req: Sched
             req.requirement_text,
             req.scheduled_for,
             req.model,
+            requirement_type=req.requirement_type,
+            requirement_id=req.requirement_id,
+            source_requirement_ids=req.source_requirement_ids,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -214,6 +245,66 @@ async def schedule_design_orchestrator(project_id: str, version: str, req: Sched
 async def get_artifacts(project_id: str, version: str):
     tree = orch.get_artifacts_tree(project_id, version)
     return tree
+
+
+@router.get("/{project_id}/requirements", response_model=List[RequirementItemResponse])
+async def list_requirement_items(project_id: str, type: str | None = None):
+    return metadata_db.list_requirement_items(project_id, type.upper() if type else None)
+
+
+@router.get("/{project_id}/requirements/{item_type}/{item_id}", response_model=RequirementItemResponse)
+async def get_requirement_item(project_id: str, item_type: str, item_id: str):
+    item = metadata_db.get_requirement_item(project_id, item_type.upper(), item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Requirement item not found.")
+    return item
+
+
+@router.get("/{project_id}/requirements/{item_type}/{item_id}/versions", response_model=List[RequirementVersionResponse])
+async def list_requirement_item_versions(project_id: str, item_type: str, item_id: str):
+    versions = metadata_db.list_requirement_versions(project_id, item_type.upper(), item_id)
+    return [requirement_identity_service.version_response(item) for item in versions]
+
+
+@router.get("/{project_id}/requirements/{item_type}/{item_id}/versions/{version_id}", response_model=RequirementVersionResponse)
+async def get_requirement_item_version(project_id: str, item_type: str, item_id: str, version_id: str):
+    version = metadata_db.get_requirement_version(project_id, item_type.upper(), item_id, version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version does not belong to the requested requirement item.")
+    return requirement_identity_service.version_response(version)
+
+
+@router.get("/{project_id}/requirements/{item_type}/{item_id}/trace", response_model=RequirementTraceResponse)
+async def get_requirement_item_trace(project_id: str, item_type: str, item_id: str):
+    return {"items": metadata_db.list_requirement_trace_edges(project_id, item_type.upper(), item_id)}
+
+
+@router.get("/{project_id}/temp/versions")
+async def list_temp_versions(project_id: str):
+    return {"items": metadata_db.list_temp_versions(project_id)}
+
+
+@router.get("/{project_id}/temp/versions/{version_id}")
+async def get_temp_version(project_id: str, version_id: str):
+    version = metadata_db.get_temp_version(project_id, version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Temp version not found.")
+    return version
+
+
+@router.post("/{project_id}/temp/versions/{version_id}/bind")
+async def bind_temp_version(project_id: str, version_id: str, req: TempVersionBindRequest):
+    try:
+        return requirement_identity_service.bind_temp_version(
+            project_id,
+            version_id,
+            requirement_type=req.requirement_type,
+            requirement_id=req.requirement_id,
+            title=req.title,
+            source_requirement_ids=req.source_requirement_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{project_id}/versions/{version}/design-artifacts")

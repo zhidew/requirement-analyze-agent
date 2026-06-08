@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, List, Optional, Dict
 
 class AgentVersion(BaseModel):
@@ -130,6 +130,16 @@ class VersionMetadata(BaseModel):
     project_id: str
     requirement: str
     run_status: str
+    requirement_type: Optional[str] = None
+    requirement_id: Optional[str] = None
+    requirement_id_source: Optional[str] = None
+    pipeline_sequence: Optional[int] = None
+    source_requirement_ids: List[str] = Field(default_factory=list)
+    derived_requirement_ids: List[str] = Field(default_factory=list)
+    manifest_path: Optional[str] = None
+    temp_archived: bool = False
+    decomposition_status: Optional[str] = None
+    decomposition_error: Optional[str] = None
     created_at: str
     updated_at: str
 

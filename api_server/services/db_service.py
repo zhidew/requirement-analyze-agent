@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import threading
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -652,6 +653,76 @@ class MetadataDB:
                 """
             )
             conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS requirement_items (
+                    project_id TEXT NOT NULL,
+                    item_type TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    title TEXT,
+                    description TEXT,
+                    id_source TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    source_item_ids_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, item_type, item_id),
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS requirement_pipeline_versions (
+                    project_id TEXT NOT NULL,
+                    item_type TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    pipeline_sequence INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, version_id),
+                    UNIQUE (project_id, item_type, item_id, pipeline_sequence),
+                    FOREIGN KEY (version_id, project_id) REFERENCES versions(version_id, project_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS requirement_trace_edges (
+                    edge_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    source_item_type TEXT NOT NULL,
+                    source_item_id TEXT NOT NULL,
+                    target_item_type TEXT NOT NULL,
+                    target_item_id TEXT NOT NULL,
+                    edge_type TEXT NOT NULL,
+                    producing_version_id TEXT,
+                    confidence REAL,
+                    evidence_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS temp_requirement_versions (
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    run_status TEXT,
+                    original_path TEXT NOT NULL,
+                    temp_path TEXT,
+                    archive_mode TEXT NOT NULL,
+                    archive_reason TEXT NOT NULL,
+                    archived_at TEXT NOT NULL,
+                    migrated_by TEXT,
+                    checksum_json TEXT,
+                    restore_status TEXT NOT NULL DEFAULT 'archived',
+                    notes TEXT,
+                    PRIMARY KEY (project_id, version_id)
+                )
+                """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_status_updated ON workflow_runs(status, updated_at)"
             )
             conn.execute(
@@ -674,6 +745,15 @@ class MetadataDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_scheduled_runs_project_version ON scheduled_runs(project_id, version_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_requirement_items_project_type ON requirement_items(project_id, item_type, updated_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_requirement_pipeline_item ON requirement_pipeline_versions(project_id, item_type, item_id, pipeline_sequence)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_temp_requirement_versions_project ON temp_requirement_versions(project_id, archived_at)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_design_artifacts_project_version ON design_artifacts(project_id, version_id, expert_id, updated_at)"
@@ -708,6 +788,16 @@ class MetadataDB:
             self._ensure_column(conn, "project_model_configs", "headers", "TEXT")
             self._ensure_column(conn, "project_model_configs", "streaming_enabled", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "project_model_configs", "provider_capabilities", "TEXT")
+            self._ensure_column(conn, "versions", "requirement_type", "TEXT")
+            self._ensure_column(conn, "versions", "requirement_id", "TEXT")
+            self._ensure_column(conn, "versions", "requirement_id_source", "TEXT")
+            self._ensure_column(conn, "versions", "pipeline_sequence", "INTEGER")
+            self._ensure_column(conn, "versions", "source_requirement_ids_json", "TEXT")
+            self._ensure_column(conn, "versions", "derived_requirement_ids_json", "TEXT")
+            self._ensure_column(conn, "versions", "manifest_path", "TEXT")
+            self._ensure_column(conn, "versions", "temp_archived", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "versions", "decomposition_status", "TEXT")
+            self._ensure_column(conn, "versions", "decomposition_error", "TEXT")
             self._ensure_column(conn, "workflow_runs", "pending_interrupt_json", "TEXT")
             self._ensure_column(conn, "knowledge_bases", "url", "TEXT")
             self._ensure_column(conn, "knowledge_bases", "branch", "TEXT NOT NULL DEFAULT 'main'")
@@ -996,18 +1086,79 @@ class MetadataDB:
         with self._transaction() as conn:
             conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
-    def upsert_version(self, project_id: str, version_id: str, requirement: str, run_status: str):
+    def upsert_version(
+        self,
+        project_id: str,
+        version_id: str,
+        requirement: str,
+        run_status: str,
+        *,
+        requirement_type: Optional[str] = None,
+        requirement_id: Optional[str] = None,
+        requirement_id_source: Optional[str] = None,
+        pipeline_sequence: Optional[int] = None,
+        source_requirement_ids: Optional[List[str]] = None,
+        derived_requirement_ids: Optional[List[str]] = None,
+        manifest_path: Optional[str] = None,
+        temp_archived: Optional[bool] = None,
+        decomposition_status: Optional[str] = None,
+        decomposition_error: Optional[str] = None,
+    ):
         now = self._utcnow()
+        existing = self.get_version(project_id, version_id)
+        existing_requirement = str((existing or {}).get("requirement") or "").strip()
+        effective_requirement = requirement if str(requirement or "").strip() else existing_requirement
         with self._transaction() as conn:
             conn.execute(
                 """
-                INSERT INTO versions (version_id, project_id, requirement, run_status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO versions (
+                    version_id, project_id, requirement, run_status,
+                    requirement_type, requirement_id, requirement_id_source, pipeline_sequence,
+                    source_requirement_ids_json, derived_requirement_ids_json, manifest_path,
+                    temp_archived, decomposition_status, decomposition_error,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(version_id, project_id) DO UPDATE SET
+                    requirement=CASE
+                        WHEN excluded.requirement IS NOT NULL AND excluded.requirement != '' THEN excluded.requirement
+                        ELSE versions.requirement
+                    END,
                     run_status=excluded.run_status,
+                    requirement_type=COALESCE(excluded.requirement_type, versions.requirement_type),
+                    requirement_id=excluded.requirement_id,
+                    requirement_id_source=COALESCE(excluded.requirement_id_source, versions.requirement_id_source),
+                    pipeline_sequence=COALESCE(excluded.pipeline_sequence, versions.pipeline_sequence),
+                    source_requirement_ids_json=COALESCE(excluded.source_requirement_ids_json, versions.source_requirement_ids_json),
+                    derived_requirement_ids_json=COALESCE(excluded.derived_requirement_ids_json, versions.derived_requirement_ids_json),
+                    manifest_path=COALESCE(excluded.manifest_path, versions.manifest_path),
+                    temp_archived=excluded.temp_archived,
+                    decomposition_status=COALESCE(excluded.decomposition_status, versions.decomposition_status),
+                    decomposition_error=excluded.decomposition_error,
                     updated_at=excluded.updated_at
                 """,
-                (version_id, project_id, requirement, run_status, now, now),
+                (
+                    version_id,
+                    project_id,
+                    effective_requirement,
+                    run_status,
+                    requirement_type if requirement_type is not None else (existing or {}).get("requirement_type"),
+                    requirement_id if requirement_id is not None else (existing or {}).get("requirement_id"),
+                    requirement_id_source if requirement_id_source is not None else (existing or {}).get("requirement_id_source"),
+                    pipeline_sequence if pipeline_sequence is not None else (existing or {}).get("pipeline_sequence"),
+                    self._dumps_json(source_requirement_ids)
+                    if source_requirement_ids is not None
+                    else self._dumps_json((existing or {}).get("source_requirement_ids")),
+                    self._dumps_json(derived_requirement_ids)
+                    if derived_requirement_ids is not None
+                    else self._dumps_json((existing or {}).get("derived_requirement_ids")),
+                    manifest_path if manifest_path is not None else (existing or {}).get("manifest_path"),
+                    1 if (temp_archived if temp_archived is not None else bool((existing or {}).get("temp_archived"))) else 0,
+                    decomposition_status if decomposition_status is not None else (existing or {}).get("decomposition_status"),
+                    decomposition_error if decomposition_error is not None else (existing or {}).get("decomposition_error"),
+                    (existing.get("created_at") if existing else now),
+                    now,
+                ),
             )
 
     def upsert_workflow_run(
@@ -1076,6 +1227,380 @@ class MetadataDB:
         data = dict(row)
         data["pending_interrupt"] = self._loads_json(data.pop("pending_interrupt_json", None), None)
         return data
+
+    def _row_to_version(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        data = dict(row)
+        data["source_requirement_ids"] = self._loads_json(data.get("source_requirement_ids_json"), [])
+        data["derived_requirement_ids"] = self._loads_json(data.get("derived_requirement_ids_json"), [])
+        data["temp_archived"] = bool(data.get("temp_archived"))
+        return data
+
+    def _row_to_requirement_item(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        data = dict(row)
+        data["source_item_ids"] = self._loads_json(data.get("source_item_ids_json"), [])
+        return data
+
+    def upsert_requirement_item(
+        self,
+        project_id: str,
+        item_type: str,
+        item_id: str,
+        *,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        id_source: str = "user_provided",
+        status: str = "active",
+        source_item_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        existing = self.get_requirement_item(project_id, item_type, item_id)
+        with self._transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO requirement_items (
+                    project_id, item_type, item_id, title, description, id_source, status,
+                    source_item_ids_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, item_type, item_id) DO UPDATE SET
+                    title=COALESCE(excluded.title, requirement_items.title),
+                    description=COALESCE(excluded.description, requirement_items.description),
+                    id_source=COALESCE(requirement_items.id_source, excluded.id_source),
+                    status=excluded.status,
+                    source_item_ids_json=COALESCE(excluded.source_item_ids_json, requirement_items.source_item_ids_json),
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    project_id,
+                    item_type,
+                    item_id,
+                    title,
+                    description,
+                    id_source,
+                    status,
+                    self._dumps_json(source_item_ids) if source_item_ids is not None else self._dumps_json((existing or {}).get("source_item_ids")),
+                    existing.get("created_at") if existing else now,
+                    now,
+                ),
+            )
+        return self.get_requirement_item(project_id, item_type, item_id) or {}
+
+    def get_requirement_item(self, project_id: str, item_type: str, item_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM requirement_items
+                WHERE project_id = ? AND item_type = ? AND item_id = ?
+                """,
+                (project_id, item_type, item_id),
+            ).fetchone()
+        return self._row_to_requirement_item(dict(row)) if row else None
+
+    def list_requirement_items(self, project_id: str, item_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            if item_type:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM requirement_items
+                    WHERE project_id = ? AND item_type = ?
+                    ORDER BY updated_at DESC
+                    """,
+                    (project_id, item_type),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM requirement_items
+                    WHERE project_id = ?
+                    ORDER BY updated_at DESC
+                    """,
+                    (project_id,),
+                ).fetchall()
+        return [self._row_to_requirement_item(dict(row)) for row in rows]
+
+    def prepare_requirement_version(
+        self,
+        project_id: str,
+        version_id: str,
+        *,
+        requirement: str,
+        item_type: Optional[str],
+        item_id: Optional[str],
+        requirement_id_source: str,
+        source_requirement_ids: Optional[List[str]] = None,
+        title: Optional[str] = None,
+        manifest_path: Optional[str] = None,
+        run_status: str = "prepared",
+        temp_archived: bool = False,
+        archive_reason: str = "missing_requirement_id",
+        archive_mode: str = "index-only",
+        temp_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        source_requirement_ids = source_requirement_ids or []
+        with self._transaction() as conn:
+            sequence = None
+            if item_type and item_id and not temp_archived:
+                conn.execute(
+                    """
+                    INSERT INTO requirement_items (
+                        project_id, item_type, item_id, title, description, id_source, status,
+                        source_item_ids_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+                    ON CONFLICT(project_id, item_type, item_id) DO UPDATE SET
+                        title=COALESCE(excluded.title, requirement_items.title),
+                        source_item_ids_json=COALESCE(excluded.source_item_ids_json, requirement_items.source_item_ids_json),
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        project_id,
+                        item_type,
+                        item_id,
+                        title,
+                        None,
+                        requirement_id_source,
+                        self._dumps_json(source_requirement_ids),
+                        now,
+                        now,
+                    ),
+                )
+                existing_binding = conn.execute(
+                    """
+                    SELECT pipeline_sequence FROM requirement_pipeline_versions
+                    WHERE project_id = ? AND version_id = ?
+                    """,
+                    (project_id, version_id),
+                ).fetchone()
+                if existing_binding:
+                    sequence = int(existing_binding["pipeline_sequence"])
+                else:
+                    max_row = conn.execute(
+                        """
+                        SELECT MAX(pipeline_sequence) AS max_sequence
+                        FROM requirement_pipeline_versions
+                        WHERE project_id = ? AND item_type = ? AND item_id = ?
+                        """,
+                        (project_id, item_type, item_id),
+                    ).fetchone()
+                    sequence = int(max_row["max_sequence"] or 0) + 1
+                    conn.execute(
+                        """
+                        INSERT INTO requirement_pipeline_versions (
+                            project_id, item_type, item_id, version_id, pipeline_sequence, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (project_id, item_type, item_id, version_id, sequence, now, now),
+                    )
+            elif temp_archived:
+                conn.execute(
+                    """
+                    INSERT INTO temp_requirement_versions (
+                        project_id, version_id, run_status, original_path, temp_path, archive_mode,
+                        archive_reason, archived_at, migrated_by, checksum_json, restore_status, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'system', NULL, 'archived', NULL)
+                    ON CONFLICT(project_id, version_id) DO UPDATE SET
+                        run_status=excluded.run_status,
+                        archive_reason=excluded.archive_reason,
+                        archived_at=excluded.archived_at,
+                        restore_status='archived'
+                    """,
+                    (
+                        project_id,
+                        version_id,
+                        run_status,
+                        f"projects/{project_id}/{version_id}",
+                        temp_path,
+                        archive_mode,
+                        archive_reason,
+                        now,
+                    ),
+                )
+            conn.execute(
+                """
+                INSERT INTO versions (
+                    version_id, project_id, requirement, run_status,
+                    requirement_type, requirement_id, requirement_id_source, pipeline_sequence,
+                    source_requirement_ids_json, derived_requirement_ids_json, manifest_path,
+                    temp_archived, decomposition_status, decomposition_error,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL, ?, ?)
+                ON CONFLICT(version_id, project_id) DO UPDATE SET
+                    requirement=CASE
+                        WHEN excluded.requirement IS NOT NULL AND excluded.requirement != '' THEN excluded.requirement
+                        ELSE versions.requirement
+                    END,
+                    run_status=excluded.run_status,
+                    requirement_type=excluded.requirement_type,
+                    requirement_id=excluded.requirement_id,
+                    requirement_id_source=excluded.requirement_id_source,
+                    pipeline_sequence=excluded.pipeline_sequence,
+                    source_requirement_ids_json=excluded.source_requirement_ids_json,
+                    manifest_path=excluded.manifest_path,
+                    temp_archived=excluded.temp_archived,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    version_id,
+                    project_id,
+                    requirement,
+                    run_status,
+                    item_type,
+                    item_id,
+                    requirement_id_source,
+                    sequence,
+                    self._dumps_json(source_requirement_ids),
+                    manifest_path,
+                    1 if temp_archived else 0,
+                    now,
+                    now,
+                ),
+            )
+        return self.get_version(project_id, version_id) or {}
+
+    def list_requirement_versions(self, project_id: str, item_type: str, item_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT v.*
+                FROM requirement_pipeline_versions rpv
+                JOIN versions v
+                  ON v.project_id = rpv.project_id AND v.version_id = rpv.version_id
+                WHERE rpv.project_id = ? AND rpv.item_type = ? AND rpv.item_id = ?
+                ORDER BY rpv.pipeline_sequence DESC, v.created_at DESC
+                """,
+                (project_id, item_type, item_id),
+            ).fetchall()
+        return [self._row_to_version(dict(row)) for row in rows]
+
+    def get_requirement_version(self, project_id: str, item_type: str, item_id: str, version_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT v.*
+                FROM requirement_pipeline_versions rpv
+                JOIN versions v
+                  ON v.project_id = rpv.project_id AND v.version_id = rpv.version_id
+                WHERE rpv.project_id = ? AND rpv.item_type = ? AND rpv.item_id = ? AND rpv.version_id = ?
+                """,
+                (project_id, item_type, item_id, version_id),
+            ).fetchone()
+        return self._row_to_version(dict(row)) if row else None
+
+    def list_temp_versions(self, project_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT v.*, t.archive_mode, t.archive_reason, t.original_path, t.temp_path,
+                       t.archived_at, t.restore_status, t.notes
+                FROM versions v
+                LEFT JOIN temp_requirement_versions t
+                  ON t.project_id = v.project_id AND t.version_id = v.version_id
+                WHERE v.project_id = ? AND v.temp_archived = 1
+                ORDER BY COALESCE(t.archived_at, v.updated_at) DESC
+                """,
+                (project_id,),
+            ).fetchall()
+        return [self._row_to_version(dict(row)) for row in rows]
+
+    def get_temp_version(self, project_id: str, version_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT v.*, t.archive_mode, t.archive_reason, t.original_path, t.temp_path,
+                       t.archived_at, t.restore_status, t.notes
+                FROM versions v
+                LEFT JOIN temp_requirement_versions t
+                  ON t.project_id = v.project_id AND t.version_id = v.version_id
+                WHERE v.project_id = ? AND v.version_id = ? AND v.temp_archived = 1
+                """,
+                (project_id, version_id),
+            ).fetchone()
+        return self._row_to_version(dict(row)) if row else None
+
+    def mark_temp_version_restored(self, project_id: str, version_id: str) -> None:
+        now = self._utcnow()
+        with self._transaction() as conn:
+            conn.execute(
+                """
+                UPDATE temp_requirement_versions
+                SET restore_status = 'restored', notes = COALESCE(notes, ''), archived_at = archived_at
+                WHERE project_id = ? AND version_id = ?
+                """,
+                (project_id, version_id),
+            )
+            conn.execute(
+                """
+                UPDATE versions
+                SET temp_archived = 0, updated_at = ?
+                WHERE project_id = ? AND version_id = ?
+                """,
+                (now, project_id, version_id),
+            )
+
+    def upsert_requirement_trace_edge(
+        self,
+        project_id: str,
+        *,
+        source_item_type: str,
+        source_item_id: str,
+        target_item_type: str,
+        target_item_id: str,
+        edge_type: str,
+        producing_version_id: Optional[str] = None,
+        confidence: Optional[float] = None,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        edge_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{project_id}:{source_item_type}:{source_item_id}:{target_item_type}:{target_item_id}:{edge_type}:{producing_version_id or ''}",
+        ))
+        with self._transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO requirement_trace_edges (
+                    edge_id, project_id, source_item_type, source_item_id, target_item_type, target_item_id,
+                    edge_type, producing_version_id, confidence, evidence_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(edge_id) DO UPDATE SET
+                    confidence=excluded.confidence,
+                    evidence_json=excluded.evidence_json
+                """,
+                (
+                    edge_id,
+                    project_id,
+                    source_item_type,
+                    source_item_id,
+                    target_item_type,
+                    target_item_id,
+                    edge_type,
+                    producing_version_id,
+                    confidence,
+                    self._dumps_json(evidence or {}),
+                    now,
+                ),
+            )
+        return {"edge_id": edge_id}
+
+    def list_requirement_trace_edges(self, project_id: str, item_type: str, item_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM requirement_trace_edges
+                WHERE project_id = ?
+                  AND (
+                    (source_item_type = ? AND source_item_id = ?)
+                    OR (target_item_type = ? AND target_item_id = ?)
+                  )
+                ORDER BY created_at DESC
+                """,
+                (project_id, item_type, item_id, item_type, item_id),
+            ).fetchall()
+        result = []
+        for row in rows:
+            data = dict(row)
+            data["evidence"] = self._loads_json(data.get("evidence_json"), {})
+            result.append(data)
+        return result
 
     def create_scheduled_run(
         self,
@@ -2949,7 +3474,7 @@ class MetadataDB:
                 (project_id, page_size, offset),
             ).fetchall()
         return {
-            "versions": [dict(row) for row in rows],
+            "versions": [self._row_to_version(dict(row)) for row in rows],
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -2971,9 +3496,7 @@ class MetadataDB:
             ).fetchone()
         if not row:
             return None
-        data = dict(row)
-        data["pending_interrupt"] = self._loads_json(data.pop("pending_interrupt_json", None), None)
-        return data
+        return self._row_to_version(dict(row))
 
     def upsert_repository(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         now = self._utcnow()

@@ -134,6 +134,13 @@ export interface ClarifiedRequirementsPayload {
   decision_log?: Array<Record<string, unknown>>;
 }
 
+export interface RequirementRunOptions {
+  requirementType?: string;
+  requirementId?: string;
+  sourceRequirementIds?: string[];
+  model?: string;
+}
+
 export interface ReflectionReport {
   report_id: string;
   artifact_id: string;
@@ -324,14 +331,39 @@ export const api = {
     apiClient.get(`/projects/${projectId}/versions`, { params: { page, page_size: pageSize } }).then(res => res.data),
   deleteProjectVersion: (projectId: string, version: string) =>
     apiClient.delete(`/projects/${projectId}/versions/${version}`).then(res => res.data),
-  runOrchestrator: (projectId: string, version: string, requirementText: string, model?: string) =>
-   apiClient.post(`/projects/${projectId}/versions/${version}/run`, { requirement_text: requirementText, model }).then(res => res.data),
-  scheduleOrchestrator: (projectId: string, version: string, requirementText: string, scheduledFor: string, model?: string) =>
+  prepareVersion: (projectId: string, version: string, requirementText: string, options?: RequirementRunOptions) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/prepare`, {
+      requirement_text: requirementText,
+      requirement_type: options?.requirementType,
+      requirement_id: options?.requirementId,
+      source_requirement_ids: options?.sourceRequirementIds ?? [],
+      model: options?.model,
+    }).then(res => res.data),
+  runOrchestrator: (projectId: string, version: string, requirementText: string, options?: RequirementRunOptions) =>
+   apiClient.post(`/projects/${projectId}/versions/${version}/run`, {
+     requirement_text: requirementText,
+     model: options?.model,
+     requirement_type: options?.requirementType,
+     requirement_id: options?.requirementId,
+     source_requirement_ids: options?.sourceRequirementIds ?? [],
+   }).then(res => res.data),
+  scheduleOrchestrator: (projectId: string, version: string, requirementText: string, scheduledFor: string, options?: RequirementRunOptions) =>
     apiClient.post(`/projects/${projectId}/versions/${version}/schedule-run`, {
       requirement_text: requirementText,
       scheduled_for: scheduledFor,
-      model,
+      model: options?.model,
+      requirement_type: options?.requirementType,
+      requirement_id: options?.requirementId,
+      source_requirement_ids: options?.sourceRequirementIds ?? [],
     }).then(res => res.data),
+  listRequirements: (projectId: string, type?: string) =>
+    apiClient.get(`/projects/${projectId}/requirements`, { params: { type } }).then(res => res.data),
+  getRequirementVersion: (projectId: string, itemType: string, itemId: string, version: string) =>
+    apiClient.get(`/projects/${projectId}/requirements/${itemType}/${itemId}/versions/${version}`).then(res => res.data),
+  getRequirementTrace: (projectId: string, itemType: string, itemId: string) =>
+    apiClient.get(`/projects/${projectId}/requirements/${itemType}/${itemId}/trace`).then(res => res.data),
+  listTempVersions: (projectId: string) =>
+    apiClient.get(`/projects/${projectId}/temp/versions`).then(res => res.data),
 
   uploadBaselineFiles: (projectId: string, version: string, files: File[]) => {
     const formData = new FormData();

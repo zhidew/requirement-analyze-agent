@@ -27,12 +27,67 @@ class ProjectResponse(BaseModel):
 class VersionRunRequest(BaseModel):
     requirement_text: str
     model: Optional[str] = None
+    requirement_type: Optional[str] = None
+    requirement_id: Optional[str] = None
+    source_requirement_ids: List[str] = Field(default_factory=list)
 
 
 class ScheduleRunRequest(BaseModel):
     requirement_text: str
     scheduled_for: str
     model: Optional[str] = None
+    requirement_type: Optional[str] = None
+    requirement_id: Optional[str] = None
+    source_requirement_ids: List[str] = Field(default_factory=list)
+
+
+class PrepareVersionRequest(BaseModel):
+    requirement_text: str = ""
+    requirement_type: Optional[str] = None
+    requirement_id: Optional[str] = None
+    source_requirement_ids: List[str] = Field(default_factory=list)
+    model: Optional[str] = None
+
+
+class TempVersionBindRequest(BaseModel):
+    requirement_type: str
+    requirement_id: str
+    title: Optional[str] = None
+    source_requirement_ids: List[str] = Field(default_factory=list)
+
+
+class RequirementItemResponse(BaseModel):
+    project_id: str
+    item_type: str
+    item_id: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    id_source: str
+    status: str
+    source_item_ids: List[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class RequirementVersionResponse(BaseModel):
+    project_id: str
+    requirement_type: Optional[str] = None
+    requirement_id: Optional[str] = None
+    requirement_id_source: Optional[str] = None
+    version_id: str
+    pipeline_sequence: Optional[int] = None
+    run_status: str
+    manifest_path: Optional[str] = None
+    source_requirement_ids: List[str] = Field(default_factory=list)
+    derived_requirement_ids: List[str] = Field(default_factory=list)
+    decomposition_status: Optional[str] = None
+    temp_archived: bool = False
+    created_at: str
+    updated_at: str
+
+
+class RequirementTraceResponse(BaseModel):
+    items: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class JobResponse(BaseModel):

@@ -77,6 +77,7 @@
     "activeProject": "活跃工作空间",
     "newDesignRun": "新建需求分析会话",
     "startDesign": "启动分析",
+    "requirementIdLabel": "RR_ID（可选）",
     "uploadIR": "RR需求文档",
     "uploadCompetitor": "竞品分析材料",
     "executionPipeline": "编排引擎",

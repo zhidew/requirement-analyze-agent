@@ -65,6 +65,7 @@ tools:
 outputs:
   expected:
     - it-requirements.md
+    - ir-items.json
     - requirement-traceability.json
     - acceptance-criteria.md
     - open-questions.md
@@ -112,6 +113,7 @@ metadata:
   prompt_hints:
     file_guidance:
       it-requirements.md: 聚合上游专家产物形成 IR 主文档，覆盖目标、范围、角色、规则、业务表单作业、作业数据分析、流程、集成、非功能约束、假设、澄清状态和待确认项。
+      ir-items.json: 将一个 RR 拆解为多个可独立承接的 IR item，包含 ir_id、title、description、source_requirement_ids、acceptance_summary、confidence、artifact_refs 和 validation/status。
       requirement-traceability.json: 建立 RR 条目、竞品参考、专家产物、IR 条款和验收标准之间的追踪关系。
       acceptance-criteria.md: 输出可验收的业务验收标准，覆盖正常、异常、权限、边界和集成场景。
       open-questions.md: 汇总所有仍需 BA/业务方/IT 确认的问题，按阻塞程度、责任方和影响范围分类。
@@ -132,6 +134,10 @@ metadata:
         - 必须区分已确认需求、按假设推进需求和待确认问题。
       requirement-traceability.json:
         - 追踪关系字段稳定且标注覆盖状态。
+      ir-items.json:
+        - 必须包含 schema_version、status、items 和 validation。
+        - 每个 item 必须包含唯一 ir_id、标题、说明、来源 RR/证据引用和置信度。
+        - status 只能是 valid、partial 或 invalid。
       acceptance-criteria.md:
         - 验收标准必须具体、可验证、可关联需求。
       open-questions.md:

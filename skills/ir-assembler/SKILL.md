@@ -16,8 +16,9 @@ keywords:
 2. 对齐术语、范围、规则、单据、流程、集成和约束，标出冲突和缺口。
 3. 聚合形成 IR 主文档，不新增无证据支撑的需求。
 4. 建立追踪矩阵，关联 RR、竞品参考、专家产物、IR 条款和验收标准。
-5. 输出验收标准和待确认问题清单。
-6. 回读产物，确认 IR 能支撑后续 SE 进入 IT 设计。
+5. 将 RR 拆解为多个可独立承接的 IR item，写入 `artifacts/ir-items.json`。
+6. 输出验收标准和待确认问题清单。
+7. 回读产物，确认 IR 能支撑后续 SE 进入 IT 设计。
 
 # Tool Usage Notes
 
@@ -32,3 +33,28 @@ keywords:
 2. 追踪矩阵 JSON 字段要稳定，至少包含 source、ir_clause、artifact_refs、coverage_status、confidence。
 3. 验收标准必须具体、可验证、可追踪，覆盖正常、异常、权限、边界和集成场景。
 4. 待确认问题必须包含问题、责任方、阻塞程度、影响范围和建议处理动作。
+5. 必须生成 `ir-items.json`，结构如下：
+
+```json
+{
+  "schema_version": 1,
+  "status": "valid",
+  "items": [
+    {
+      "ir_id": "IR20260607164001",
+      "title": "客户资料录入与校验",
+      "description": "可独立进入 IT 设计的需求说明。",
+      "source_requirement_ids": ["RR20260607163025"],
+      "acceptance_summary": "关键验收条件摘要。",
+      "confidence": 0.86,
+      "artifact_refs": ["artifacts/it-requirements.md#客户资料录入与校验"]
+    }
+  ],
+  "validation": {
+    "status": "valid",
+    "errors": []
+  }
+}
+```
+
+`status` 只能是 `valid`、`partial` 或 `invalid`；无法拆解时也必须输出空 `items` 和 `invalid` 状态，并说明错误。

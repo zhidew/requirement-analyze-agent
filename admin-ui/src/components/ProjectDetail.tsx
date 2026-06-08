@@ -12,7 +12,7 @@ import { Mermaid } from './Mermaid';
 import { HumanInteractionPanel } from './HumanInteractionPanel';
 
 const AGENT_MAPPING: Record<string, string[]> = {
-  planner: ['requirements.json', 'input-requirements.md', 'original-requirements.md'],
+  planner: ['baseline/requirements.json', 'baseline/raw-requirements.md', 'baseline/input-requirements.md', 'baseline/original-requirements.md'],
   'requirement-clarification': ['requirement-clarification.md', 'scope-and-assumptions.md', 'glossary.md', 'clarification-questionnaire.md', 'ambiguity-map.md', 'requirement-maturity-assessment.md', 'decision-records.md'],
   'rules-management': ['business-rules.md', 'decision-tables.md', 'rule-parameters.yaml'],
   'business-form-operation': ['business-form-operations.md', 'field-requirements.yaml', 'operation-permissions.md', 'form-data-analysis.md'],
@@ -42,7 +42,7 @@ const VALIDATOR_ARTIFACT_ORDER = [
 const normalizeArtifactPattern = (value: string) => value.replace(/^(?:artifacts|evidence|logs|release)\//, '');
 
 type StreamStatus = 'idle' | 'connecting' | 'connected' | 'error';
-type RunStatus = 'scheduled' | 'queued' | 'running' | 'waiting_human' | 'success' | 'failed';
+type RunStatus = 'prepared' | 'scheduled' | 'queued' | 'running' | 'waiting_human' | 'success' | 'failed';
 type ArtifactStatus = 'created' | 'updated';
 
 const ACTIVE_REFRESH_RUN_STATUSES = new Set<RunStatus>(['scheduled', 'queued', 'running', 'waiting_human']);
@@ -93,6 +93,10 @@ interface WorkflowState {
   } | null;
   stale_execution_detected?: boolean;
   updated_at: string;
+  requirement_type?: string | null;
+  requirement_id?: string | null;
+  pipeline_sequence?: number | null;
+  temp_archived?: boolean;
   node_llm_map?: Record<string, {
     provider?: string | null;
     model?: string | null;
@@ -104,6 +108,30 @@ interface VersionStateSummary {
   run_status: RunStatus;
   updated_at?: string;
   current_node?: string | null;
+  requirement_type?: string | null;
+  requirement_id?: string | null;
+  pipeline_sequence?: number | null;
+  temp_archived?: boolean;
+}
+
+interface VersionMetadata {
+  version_id: string;
+  requirement_type?: string | null;
+  requirement_id?: string | null;
+  pipeline_sequence?: number | null;
+  temp_archived?: boolean;
+  run_status?: RunStatus;
+}
+
+interface RequirementTraceEdge {
+  edge_id: string;
+  source_item_type: string;
+  source_item_id: string;
+  target_item_type: string;
+  target_item_id: string;
+  edge_type: string;
+  producing_version_id?: string | null;
+  confidence?: number | null;
 }
 
 interface RepositoryResourceSummary {
@@ -573,7 +601,9 @@ export function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const [versions, setVersions] = useState<string[]>([]);
+  const [versionMetadataMap, setVersionMetadataMap] = useState<Record<string, VersionMetadata>>({});
   const [requirement, setRequirement] = useState('');
+  const [requirementId, setRequirementId] = useState('');
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [projectModels, setProjectModels] = useState<any[]>([]);
 
@@ -594,6 +624,7 @@ export function ProjectDetail() {
   const [designArtifacts, setDesignArtifacts] = useState<DesignArtifact[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [workflowState, setWorkflowState] = useState<WorkflowState | null>(null);
+  const [requirementTrace, setRequirementTrace] = useState<RequirementTraceEdge[]>([]);
   const [currentInteraction, setCurrentInteraction] = useState<InteractionRecord | null>(null);
   const [interactionHistory, setInteractionHistory] = useState<InteractionRecord[]>([]);
   const [clarifiedRequirements, setClarifiedRequirements] = useState<ClarifiedRequirementsPayload | null>(null);
@@ -1241,6 +1272,10 @@ export function ProjectDetail() {
         run_status: state.run_status,
         current_node: state.current_node,
         updated_at: state.updated_at,
+        requirement_type: state.requirement_type,
+        requirement_id: state.requirement_id,
+        pipeline_sequence: state.pipeline_sequence,
+        temp_archived: state.temp_archived,
       });
       if (selectedVersionRef.current !== versionToFetch) return;
       setWorkflowState(state);
@@ -1275,16 +1310,31 @@ export function ProjectDetail() {
       }
       void fetchLogs(versionToFetch);
       void fetchInteractionContext(versionToFetch);
+      void loadRequirementTrace(state);
 
     } catch (err: any) {
       if (selectedVersionRef.current !== versionToFetch) return;
       if (err.response?.status === 404) {
         setWorkflowState(null);
+        setRequirementTrace([]);
         setCurrentInteraction(null);
         setInteractionHistory([]);
         setClarifiedRequirements(null);
       }
       setStreamStatus('error');
+    }
+  };
+
+  const loadRequirementTrace = async (state: WorkflowState | null) => {
+    if (!id || !state?.requirement_type || !state.requirement_id) {
+      setRequirementTrace([]);
+      return;
+    }
+    try {
+      const res = await api.getRequirementTrace(id, state.requirement_type, state.requirement_id);
+      setRequirementTrace(Array.isArray(res.items) ? res.items : []);
+    } catch {
+      setRequirementTrace([]);
     }
   };
 
@@ -1299,6 +1349,16 @@ export function ProjectDetail() {
       const res = await api.getProjectVersions(id, targetPage, targetPageSize);
       const versionIds = res.versions.map((v: any) => v.version_id);
       setVersions(versionIds);
+      setVersionMetadataMap(Object.fromEntries(
+        res.versions.map((v: any) => [v.version_id, {
+          version_id: v.version_id,
+          requirement_type: v.requirement_type,
+          requirement_id: v.requirement_id,
+          pipeline_sequence: v.pipeline_sequence,
+          temp_archived: Boolean(v.temp_archived),
+          run_status: v.run_status,
+        }]),
+      ));
       setTotalVersions(res.total);
       setPage(res.page);
       setPageSize(res.page_size);
@@ -1321,6 +1381,10 @@ export function ProjectDetail() {
                 run_status: state.run_status,
                 current_node: state.current_node,
                 updated_at: state.updated_at,
+                requirement_type: state.requirement_type,
+                requirement_id: state.requirement_id,
+                pipeline_sequence: state.pipeline_sequence,
+                temp_archived: state.temp_archived,
               }] as const;
             }),
           );
@@ -1367,6 +1431,7 @@ export function ProjectDetail() {
     setDesignArtifacts([]);
     setSelectedFile(null);
     setWorkflowState(null);
+    setRequirementTrace([]);
     setCurrentInteraction(null);
     setInteractionHistory([]);
     setClarifiedRequirements(null);
@@ -1391,6 +1456,7 @@ export function ProjectDetail() {
 
   const finalizeNewVersionSubmission = async (version: string) => {
     setRequirement('');
+    setRequirementId('');
     setInputFiles([]);
     setSelectedInterruptOption('');
     await loadVersions(page, pageSize, version);
@@ -1406,9 +1472,16 @@ export function ProjectDetail() {
     try {
       const timestampVersion = generateVersionId();
       prepareVersionRunState(timestampVersion, 'connecting');
+      const runOptions = {
+        requirementType: 'RR',
+        requirementId: requirementId.trim() || undefined,
+        sourceRequirementIds: [],
+        model: selectedModel,
+      };
+      await api.prepareVersion(id, timestampVersion, requirement, runOptions);
       await uploadSelectedFiles(timestampVersion);
 
-      const run = await api.runOrchestrator(id, timestampVersion, requirement, selectedModel);
+      const run = await api.runOrchestrator(id, timestampVersion, requirement, runOptions);
       setCurrentRunId(run.job_id);
       void fetchState(timestampVersion);
       await finalizeNewVersionSubmission(timestampVersion);
@@ -1434,8 +1507,15 @@ export function ProjectDetail() {
     try {
       const timestampVersion = generateVersionId();
       prepareVersionRunState(timestampVersion, 'idle');
+      const runOptions = {
+        requirementType: 'RR',
+        requirementId: requirementId.trim() || undefined,
+        sourceRequirementIds: [],
+        model: selectedModel,
+      };
+      await api.prepareVersion(id, timestampVersion, requirement, runOptions);
       await uploadSelectedFiles(timestampVersion);
-      await api.scheduleOrchestrator(id, timestampVersion, requirement, scheduledDate.toISOString(), selectedModel);
+      await api.scheduleOrchestrator(id, timestampVersion, requirement, scheduledDate.toISOString(), runOptions);
       await fetchState(timestampVersion);
       await finalizeNewVersionSubmission(timestampVersion);
       setIsScheduleDialogOpen(false);
@@ -1667,6 +1747,27 @@ export function ProjectDetail() {
   const filteredArtifacts = useMemo(() => {
     if (!selectedNode) {
       return [];
+    }
+    if (selectedNode === 'planner') {
+      const baselineFiles = Object.keys(artifacts)
+        .filter((filename) => filename.startsWith('baseline/') && !filename.endsWith('/upload_events.jsonl'))
+        .sort((left, right) => {
+          const preferred = [
+            'baseline/requirement-item.json',
+            'baseline/requirements.json',
+            'baseline/raw-requirements.md',
+            'baseline/input-requirements.md',
+            'baseline/original-requirements.md',
+          ];
+          const leftIndex = preferred.indexOf(left);
+          const rightIndex = preferred.indexOf(right);
+          const normalizedLeft = leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex;
+          const normalizedRight = rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex;
+          return normalizedLeft - normalizedRight || left.localeCompare(right);
+        });
+      if (baselineFiles.length > 0) {
+        return baselineFiles;
+      }
     }
     const evidenceFilename = `${selectedNode}.json`;
     let evidencePatterns: string[] = [];
@@ -2272,6 +2373,12 @@ export function ProjectDetail() {
           dot: 'bg-slate-400',
           pill: 'bg-slate-50 text-slate-600 border-slate-200',
         };
+      case 'prepared':
+        return {
+          label: 'PREPARED',
+          dot: 'bg-slate-300',
+          pill: 'bg-slate-50 text-slate-600 border-slate-200',
+        };
       default:
         return {
           label: 'UNKNOWN',
@@ -2280,6 +2387,85 @@ export function ProjectDetail() {
         };
     }
   };
+
+  const renderVersionRow = (v: string) => {
+    const summary = versionStateMap[v];
+    const metadata = versionMetadataMap[v] || {};
+    const requirementType = summary?.requirement_type || metadata.requirement_type;
+    const requirementIdValue = summary?.requirement_id || metadata.requirement_id;
+    const pipelineSequence = summary?.pipeline_sequence ?? metadata.pipeline_sequence;
+    const isTemp = Boolean(summary?.temp_archived ?? metadata.temp_archived);
+    const statusMeta = getVersionStatusMeta(summary?.run_status || metadata.run_status);
+    return (
+      <div
+        key={v}
+        className={`w-full flex items-center justify-between gap-3 p-4 rounded-2xl transition-all text-xs text-left ${selectedVersion === v
+            ? 'bg-white border-2 border-indigo-500 shadow-md text-gray-900 font-bold'
+            : 'bg-transparent border border-transparent text-gray-500 hover:bg-gray-100'
+          }`}
+      >
+        <button
+          onClick={() => handleSelectVersion(v)}
+          className="min-w-0 flex-1 text-left"
+        >
+          <div className="font-mono truncate">{v}</div>
+          <div className="mt-1 truncate text-[10px] font-black uppercase tracking-wider text-gray-400">
+            {requirementIdValue
+              ? `${requirementType || 'REQ'} ${requirementIdValue}${pipelineSequence ? ` #${pipelineSequence}` : ''}`
+              : isTemp
+                ? 'Temp / 未绑定'
+                : 'Legacy / 未绑定'}
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${statusMeta.dot}`} />
+            <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-wider ${statusMeta.pill}`}>
+              {statusMeta.label}
+            </span>
+          </div>
+        </button>
+        <div className="flex items-center gap-2">
+          {selectedVersion === v && <div className="h-2 w-2 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]" />}
+          <button
+            onClick={() => handleDeleteVersion(v)}
+            disabled={deletingVersion !== null}
+            className="rounded-xl border border-rose-200 bg-white p-2 text-rose-500 transition-all hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+            title={`Delete ${v}`}
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const groupedVersions = useMemo(() => {
+    const groups: Array<{ key: string; label: string; versions: string[] }> = [];
+    const groupMap = new Map<string, { key: string; label: string; versions: string[] }>();
+    const tempVersions: string[] = [];
+
+    versions.forEach((version) => {
+      const summary = versionStateMap[version];
+      const metadata = versionMetadataMap[version] || {};
+      const requirementType = summary?.requirement_type || metadata.requirement_type;
+      const requirementIdValue = summary?.requirement_id || metadata.requirement_id;
+      const isTemp = Boolean(summary?.temp_archived ?? metadata.temp_archived);
+      if (!requirementIdValue || isTemp) {
+        tempVersions.push(version);
+        return;
+      }
+      const key = `${requirementType || 'REQ'}:${requirementIdValue}`;
+      if (!groupMap.has(key)) {
+        const group = { key, label: `${requirementType || 'REQ'} ${requirementIdValue}`, versions: [] };
+        groupMap.set(key, group);
+        groups.push(group);
+      }
+      groupMap.get(key)?.versions.push(version);
+    });
+    if (tempVersions.length > 0) {
+      groups.push({ key: '__temp__', label: 'Temp / 未绑定版本', versions: tempVersions });
+    }
+    return groups;
+  }, [versions, versionMetadataMap, versionStateMap]);
 
   const handleRetryNode = async () => {
     if (!id || !selectedVersion || !selectedNode) return;
@@ -2401,6 +2587,17 @@ export function ProjectDetail() {
               {inputFiles.length > 0 && <button onClick={() => setInputFiles([])} className="text-[9px] font-black text-rose-500 uppercase tracking-widest hover:underline">{t('projectDetail.clearFiles')}</button>}
             </div>
 
+            <div className="space-y-2">
+              <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest px-1">{t('projectDetail.requirementIdLabel')}</label>
+              <input
+                value={requirementId}
+                onChange={(e) => setRequirementId(e.target.value)}
+                placeholder="RR20260607163025"
+                className="w-full rounded-2xl border-none bg-gray-50 px-4 py-3 text-xs font-bold text-gray-700 outline-none transition-all placeholder:text-gray-400 focus:ring-2 focus:ring-indigo-500"
+                disabled={isSubmittingRun}
+              />
+            </div>
+
             <div className="grid grid-cols-1 gap-2">
               {renderUploadBtn('ir', t('projectDetail.uploadIR'), <FileText size={14} />, true)}
               {renderUploadBtn('competitor', t('projectDetail.uploadCompetitor'), <BarChart3 size={14} />)}
@@ -2477,44 +2674,18 @@ export function ProjectDetail() {
               </button>
             </div>
             <div className="space-y-2">
-              {versions.map((v) => (
-                (() => {
-                  const summary = versionStateMap[v];
-                  const statusMeta = getVersionStatusMeta(summary?.run_status);
-                  return (
-                    <div
-                      key={v}
-                      className={`w-full flex items-center justify-between gap-3 p-4 rounded-2xl transition-all text-xs text-left ${selectedVersion === v
-                          ? 'bg-white border-2 border-indigo-500 shadow-md text-gray-900 font-bold'
-                          : 'bg-transparent border border-transparent text-gray-500 hover:bg-gray-100'
-                        }`}
-                    >
-                      <button
-                        onClick={() => handleSelectVersion(v)}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <div className="font-mono truncate">{v}</div>
-                        <div className="mt-2 flex items-center gap-2">
-                          <span className={`h-2 w-2 rounded-full ${statusMeta.dot}`} />
-                          <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-wider ${statusMeta.pill}`}>
-                            {statusMeta.label}
-                          </span>
-                        </div>
-                      </button>
-                      <div className="flex items-center gap-2">
-                        {selectedVersion === v && <div className="h-2 w-2 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]" />}
-                        <button
-                          onClick={() => handleDeleteVersion(v)}
-                          disabled={deletingVersion !== null}
-                          className="rounded-xl border border-rose-200 bg-white p-2 text-rose-500 transition-all hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          title={`Delete ${v}`}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
+              {groupedVersions.map((group) => (
+                <div key={group.key} className="space-y-2">
+                  <div className="flex items-center justify-between px-2 pt-2">
+                    <div className="min-w-0 truncate text-[10px] font-black uppercase tracking-wider text-gray-500">
+                      {group.label}
                     </div>
-                  );
-                })()
+                    <div className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[9px] font-black text-gray-400">
+                      {group.versions.length}
+                    </div>
+                  </div>
+                  {group.versions.map((version) => renderVersionRow(version))}
+                </div>
               ))}
             </div>
 
@@ -2731,6 +2902,37 @@ export function ProjectDetail() {
                 )}
               </div>
             </div>
+
+            {(workflowState?.requirement_id || requirementTrace.length > 0) && (
+              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">Trace</div>
+                  {workflowState?.requirement_id && (
+                    <div className="max-w-[260px] truncate rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-wider text-gray-500">
+                      {workflowState.requirement_type} {workflowState.requirement_id}
+                    </div>
+                  )}
+                </div>
+                {requirementTrace.length > 0 ? (
+                  <div className="space-y-2">
+                    {requirementTrace.slice(0, 6).map((edge) => (
+                      <div key={edge.edge_id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-[11px] font-bold text-gray-600">
+                        <div className="min-w-0 truncate">
+                          <span className="font-black text-gray-800">{edge.source_item_type} {edge.source_item_id}</span>
+                          <span className="px-2 text-gray-300">-&gt;</span>
+                          <span className="font-black text-gray-800">{edge.target_item_type} {edge.target_item_id}</span>
+                        </div>
+                        <div className="shrink-0 font-mono text-[10px] text-gray-400">
+                          {edge.producing_version_id || edge.edge_type}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs font-bold text-gray-400">No trace edges yet.</div>
+                )}
+              </div>
+            )}
 
             <TaskKanban
               tasks={workflowState?.task_queue || []}

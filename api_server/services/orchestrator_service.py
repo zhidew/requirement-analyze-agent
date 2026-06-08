@@ -16,6 +16,7 @@ from graphs.state import merge_artifacts
 from models.events import dump_event, validate_event_payload
 from services.log_service import format_run_log_entry, get_run_log, run_log_dedupe_key, save_run_log
 from services.db_service import JSON_UNSET, metadata_db
+from services import requirement_decomposition_service, requirement_identity_service
 from services.artifact_governance_runtime import finalize_expert_artifact_outputs
 from services.design_artifact_service import sync_artifacts_from_disk
 from services.llm_service import (
@@ -830,6 +831,10 @@ def _set_runtime_state(
 
     # Also update persistent metadata DB
     metadata_db.upsert_version(project_id, version, resolved_requirement, run_status)
+    try:
+        requirement_identity_service.write_requirement_manifest(project_id, version, status=run_status)
+    except Exception as exc:
+        print(f"[Orchestrator] Failed to update requirement manifest: {exc}")
 
     runtime_registry[thread_id] = {
         **previous,
@@ -1158,9 +1163,11 @@ def _load_artifacts_from_disk(project_id: str, version: str) -> dict:
             if not item.is_file():
                 continue
             try:
-                artifacts[item.name] = item.read_text(encoding="utf-8")
+                content = item.read_text(encoding="utf-8")
             except Exception:
-                artifacts[item.name] = "[Binary]"
+                content = "[Binary]"
+            artifacts[f"{dirname}/{item.name}"] = content
+            artifacts.setdefault(item.name, content)
     return artifacts
 
 
@@ -1660,6 +1667,16 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         "node_llm_map": node_llm_map,
         "schedule_id": scheduled_run.get("schedule_id") if scheduled_run else None,
         "scheduled_for": scheduled_run.get("scheduled_for") if scheduled_run else None,
+        "requirement_type": version_record.get("requirement_type"),
+        "requirement_id": version_record.get("requirement_id"),
+        "requirement_id_source": version_record.get("requirement_id_source"),
+        "pipeline_sequence": version_record.get("pipeline_sequence"),
+        "source_requirement_ids": version_record.get("source_requirement_ids") or [],
+        "derived_requirement_ids": version_record.get("derived_requirement_ids") or [],
+        "manifest_path": version_record.get("manifest_path"),
+        "temp_archived": bool(version_record.get("temp_archived")),
+        "decomposition_status": version_record.get("decomposition_status"),
+        "decomposition_error": version_record.get("decomposition_error"),
     }
 
 
@@ -2811,6 +2828,17 @@ async def run_orchestrator_task(
         latest_status = latest_state.get("run_status") if latest_state else RUN_STATUS_SUCCESS
         if latest_status == RUN_STATUS_SUCCESS:
             _ensure_job(job_id)["status"] = RUN_STATUS_SUCCESS
+            try:
+                decomposition_result = requirement_decomposition_service.process_decomposition_artifact(project_id, version)
+                if decomposition_result.get("status") in {"valid", "partial", "invalid", "pending"}:
+                    _append_job_log(
+                        job_id,
+                        f"[SYSTEM] Requirement decomposition status: {decomposition_result.get('status')}.",
+                        project_id=project_id,
+                        version=version,
+                    )
+            except Exception as exc:
+                print(f"[WARN] Failed to process requirement decomposition artifact: {exc}")
             _finalize_waiting_interactions_for_version(
                 project_id,
                 version,
@@ -3790,15 +3818,27 @@ async def schedule_orchestrator_run(
     requirement_text: str,
     scheduled_for: str,
     model: str | None = None,
+    requirement_type: str | None = None,
+    requirement_id: str | None = None,
+    source_requirement_ids: List[str] | None = None,
 ) -> dict:
     requirement_text = _load_persisted_requirement_text(project_id, version, requirement_text)
-    _write_requirement_baseline_files(project_id, version, requirement_text, overwrite=True)
     scheduled_at = _parse_iso_timestamp(scheduled_for)
     if scheduled_at is None:
         raise ValueError("Invalid scheduled time.")
 
     if scheduled_at <= datetime.datetime.now(datetime.timezone.utc):
         raise ValueError("Scheduled time must be in the future.")
+
+    requirement_identity_service.ensure_prepared_for_run(
+        project_id,
+        version,
+        requirement_text=requirement_text,
+        requirement_type=requirement_type,
+        requirement_id=requirement_id,
+        source_requirement_ids=source_requirement_ids,
+    )
+    _write_requirement_baseline_files(project_id, version, requirement_text, overwrite=True)
 
     project_root = PROJECTS_DIR / project_id / version
     project_root.mkdir(parents=True, exist_ok=True)
@@ -3825,6 +3865,7 @@ async def schedule_orchestrator_run(
 
     waiting_reason = _format_scheduled_waiting_reason(scheduled_for)
     metadata_db.upsert_version(project_id, version, requirement_text, RUN_STATUS_SCHEDULED)
+    requirement_identity_service.write_requirement_manifest(project_id, version, status=RUN_STATUS_SCHEDULED)
     metadata_db.upsert_workflow_run(
         project_id,
         version,
@@ -3855,8 +3896,19 @@ def trigger_orchestrator(
     version: str,
     requirement_text: str,
     model: str | None = None,
+    requirement_type: str | None = None,
+    requirement_id: str | None = None,
+    source_requirement_ids: List[str] | None = None,
 ) -> dict:
     requirement_text = _load_persisted_requirement_text(project_id, version, requirement_text)
+    requirement_identity_service.ensure_prepared_for_run(
+        project_id,
+        version,
+        requirement_text=requirement_text,
+        requirement_type=requirement_type,
+        requirement_id=requirement_id,
+        source_requirement_ids=source_requirement_ids,
+    )
     _write_requirement_baseline_files(project_id, version, requirement_text, overwrite=True)
     active_job = _active_job_for_thread(project_id, version)
     if active_job:

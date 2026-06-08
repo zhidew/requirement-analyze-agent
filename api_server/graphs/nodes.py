@@ -26,6 +26,7 @@ PLANNER_EXPERT_SELECTION_INTERACTION = "expert_selection"
 PLANNER_REASONING_TITLE = "### 编排规划推理"
 REQUIREMENT_CLARIFIER_REASONING_TITLE = "### 需求澄清推理"
 REQUIREMENT_CLARIFICATION_MAX_ROUNDS = int(os.getenv("REQUIREMENT_CLARIFICATION_MAX_ROUNDS", "6"))
+COMBINED_INPUT_QUERY_MAX_CHARS = int(os.getenv("COMBINED_INPUT_QUERY_MAX_CHARS", "12000"))
 
 # Agent aliases for normalization (kept for backward compatibility)
 AGENT_ALIASES = {
@@ -1254,6 +1255,62 @@ def _summarize_human_inputs(answer_entries: List[Dict[str, Any]], human_feedback
     }
 
 
+def _truncate_combined_input_text(value: str, max_chars: int = COMBINED_INPUT_QUERY_MAX_CHARS) -> str:
+    normalized = str(value or "").strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[:max_chars].rstrip() + "..."
+
+
+def _build_combined_input_context(
+    *,
+    requirement_text: str,
+    uploaded_files: List[str],
+    structure_summary: List[Dict[str, Any]],
+    human_inputs: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    material_summaries: List[Dict[str, Any]] = []
+    for entry in structure_summary:
+        if not isinstance(entry, dict):
+            continue
+        material = {
+            "path": entry.get("path") or entry.get("name"),
+            "name": entry.get("name"),
+            "summary_type": entry.get("summary_type"),
+            "headings": entry.get("headings") or [],
+            "top_level_keys": entry.get("top_level_keys") or [],
+            "symbols": entry.get("symbols") or [],
+            "content_excerpt": entry.get("content_excerpt") or "",
+        }
+        material_summaries.append({key: value for key, value in material.items() if value not in (None, "", [])})
+
+    query_parts = []
+    if str(requirement_text or "").strip():
+        query_parts.append(f"Requirement Text:\n{requirement_text.strip()}")
+    for material in material_summaries:
+        material_lines = [f"Uploaded Material: {material.get('path') or material.get('name') or '(unknown)'}"]
+        if material.get("headings"):
+            material_lines.append(f"Headings: {json.dumps(material['headings'], ensure_ascii=False)}")
+        if material.get("top_level_keys"):
+            material_lines.append(f"Top Level Keys: {json.dumps(material['top_level_keys'], ensure_ascii=False)}")
+        if material.get("symbols"):
+            material_lines.append(f"Symbols: {json.dumps(material['symbols'], ensure_ascii=False)}")
+        if material.get("content_excerpt"):
+            material_lines.append(f"Excerpt:\n{material['content_excerpt']}")
+        query_parts.append("\n".join(material_lines))
+    if human_inputs:
+        query_parts.append(f"Human Inputs:\n{json.dumps(human_inputs, ensure_ascii=False)}")
+
+    query_text = _truncate_combined_input_text("\n\n".join(query_parts))
+    return {
+        "requirement_text": requirement_text,
+        "uploaded_files": uploaded_files,
+        "uploaded_materials": material_summaries,
+        "human_inputs": human_inputs or {},
+        "query_text": query_text,
+    }
+
+
 def _planner_success_task() -> List[Task]:
     return [{"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "success", "dependencies": [], "priority": 100}]
 
@@ -1566,9 +1623,16 @@ async def requirement_clarifier_node(state: DesignState) -> Dict[str, Any]:
     tool_results = [list_files_result, extract_structure_result]
     structure_summary = extract_structure_result["output"].get("files", [])
     asset_context = _build_project_asset_context(project_id)
-    asset_insights = _query_asset_insights(project_id, requirement_text)
     runtime_llm_settings = resolve_runtime_llm_settings(state.get("design_context"))
     clarifier_answers = ((state.get("human_answers") or {}).get("requirement_clarifier") or [])
+    clarification_inputs = _summarize_human_inputs(clarifier_answers)
+    combined_input_context = _build_combined_input_context(
+        requirement_text=requirement_text,
+        uploaded_files=uploaded_files,
+        structure_summary=structure_summary,
+        human_inputs={"requirement_clarifier": clarification_inputs} if clarification_inputs else None,
+    )
+    asset_insights = _query_asset_insights(project_id, combined_input_context.get("query_text") or requirement_text)
     try:
         question_payload = await asyncio.to_thread(
             _build_requirement_clarification_question,
@@ -1708,9 +1772,15 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
     if human_inputs:
         combined_human_inputs["planner"] = human_inputs
     asset_context = _build_project_asset_context(project_id)
+    combined_input_context = _build_combined_input_context(
+        requirement_text=requirement_text,
+        uploaded_files=uploaded_files,
+        structure_summary=structure_summary,
+        human_inputs=combined_human_inputs or None,
+    )
 
     # Actively query three repositories for content insights
-    asset_insights = _query_asset_insights(project_id, requirement_text)
+    asset_insights = _query_asset_insights(project_id, combined_input_context.get("query_text") or requirement_text)
     if asset_insights.get("query_errors"):
         for err in asset_insights["query_errors"][:5]:
             print(f"[DEBUG] Planner asset insight error: {err}")
@@ -1774,6 +1844,7 @@ Output JSON format:
 
     user_prompt = (
         f"RR Text: {requirement_text}\n"
+        f"Combined Input Materials: {json.dumps(combined_input_context, ensure_ascii=False)}\n"
         f"Uploaded Files: {', '.join(uploaded_files)}\n"
         f"Uploaded File Structures: {json.dumps(structure_summary, ensure_ascii=False)}\n"
         "Evaluate whether the existing materials already provide enough information to select the BA requirement-analysis experts."
@@ -1955,7 +2026,7 @@ Output JSON format:
         active_agents = _apply_policy_based_auto_selection(
             active_agents=active_agents,
             enabled_experts=llm_selectable_experts,
-            requirement_text=requirement_text,
+            requirement_text=combined_input_context.get("query_text") or requirement_text,
             human_inputs=combined_human_inputs or human_inputs,
         )
         policy_auto_selected = sorted(active_agents - pre_policy_agents)
@@ -1998,6 +2069,7 @@ Output JSON format:
             "requirement": requirement_text,
             "uploaded_files": uploaded_files,
             "candidate_files": candidate_files,
+            "combined_input_context": combined_input_context,
             "project_layout": {
                 "project_root": ".",
                 "baseline_dir": "baseline",
@@ -2078,6 +2150,7 @@ Output JSON format:
             "requirement": requirement_text,
             "uploaded_files": uploaded_files,
             "candidate_files": candidate_files,
+            "combined_input_context": combined_input_context,
             "project_layout": {
                 "project_root": ".",
                 "baseline_dir": "baseline",
@@ -2177,6 +2250,7 @@ Output JSON format:
         "requirement": requirement_text,
         "uploaded_files": uploaded_files,
         "candidate_files": candidate_files,
+        "combined_input_context": combined_input_context,
         "project_layout": {
             "project_root": ".",
             "baseline_dir": "baseline",
