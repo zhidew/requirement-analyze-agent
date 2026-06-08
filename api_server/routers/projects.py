@@ -38,6 +38,7 @@ from models.project import (
 from models.management import VersionListResponse
 import services.orchestrator_service as orch
 from services import requirement_identity_service
+from services.version_path_resolver import resolve_version_path
 from services.db_service import metadata_db
 from services import design_artifact_service as artifacts_service
 from services import context_consistency_service
@@ -90,7 +91,7 @@ async def upload_baseline_files(
     files: List[UploadFile] = File(...)
 ):
     """上传基线输入文件（需求、模型、字典等）"""
-    project_path = orch.PROJECTS_DIR / project_id / version
+    project_path = resolve_version_path(project_id, version)
     baseline_dir = project_path / "baseline"
     if not await _try_acquire(_BASELINE_UPLOAD_SEMAPHORE):
         detail = {

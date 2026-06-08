@@ -50,12 +50,21 @@ def run_log_dedupe_key(message: str) -> str:
     """
     return _RUN_LOG_TIMESTAMP_RE.sub("", str(message or ""), count=1)
 
+
+def _resolve_version_log_dir(project_id: str, version: str, base_dir: Path) -> Path:
+    try:
+        from services.version_path_resolver import resolve_version_path
+
+        return resolve_version_path(project_id, version) / "logs"
+    except Exception:
+        return base_dir / "projects" / project_id / version / "logs"
+
 def save_run_log(project_id: str, version: str, base_dir: Path, logs: list):
     """
     将执行日志持久化到项目的对应版本目录下
     """
     try:
-        log_dir = base_dir / "projects" / project_id / version / "logs"
+        log_dir = _resolve_version_log_dir(project_id, version, base_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "orchestrator_run.log"
         
@@ -131,7 +140,7 @@ def _iter_project_llm_log_files(project_dir: Path) -> list[Path]:
     if not project_dir.exists():
         return []
     files: list[Path] = []
-    for log_dir in project_dir.glob("*/logs"):
+    for log_dir in project_dir.rglob("logs"):
         if not log_dir.is_dir():
             continue
         index_file = log_dir / "llm_interactions.jsonl"
@@ -161,7 +170,7 @@ def _safe_unlink(path: Path) -> bool:
 
 
 def _cleanup_empty_llm_log_dirs(project_dir: Path) -> None:
-    for subdir in sorted(project_dir.glob("*/logs/*"), key=lambda item: len(item.parts), reverse=True):
+    for subdir in sorted(project_dir.rglob("logs/*"), key=lambda item: len(item.parts), reverse=True):
         if subdir.name not in {"prompts", "responses"} or not subdir.is_dir():
             continue
         try:
@@ -254,7 +263,7 @@ def save_llm_interaction(
     4. JSONL -> Lightweight index with timestamped refs.
     """
     try:
-        log_dir = base_dir / "projects" / project_id / version / "logs"
+        log_dir = _resolve_version_log_dir(project_id, version, base_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         
         # 1. Generate Base ID for this interaction
@@ -333,7 +342,7 @@ def get_run_log(project_id: str, version: str, base_dir: Path) -> list:
     """
     读取指定版本的持久化执行日志
     """
-    log_file = base_dir / "projects" / project_id / version / "logs" / "orchestrator_run.log"
+    log_file = _resolve_version_log_dir(project_id, version, base_dir) / "orchestrator_run.log"
     if log_file.exists():
         with open(log_file, "r", encoding="utf-8") as f:
             return [line.strip() for line in f.readlines()]

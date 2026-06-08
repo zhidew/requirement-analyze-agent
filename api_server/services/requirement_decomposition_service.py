@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from services import requirement_identity_service
 from services.db_service import metadata_db
+from services.version_path_resolver import resolve_version_path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PROJECTS_DIR = BASE_DIR / "projects"
@@ -16,7 +17,7 @@ TARGET_ID_FIELDS = ("ir_id", "id", "item_id", "requirement_id") if IS_REQUIREMEN
 
 
 def _artifact_path(project_id: str, version_id: str) -> Path:
-    return PROJECTS_DIR / project_id / version_id / "artifacts" / DECOMPOSITION_FILE
+    return resolve_version_path(project_id, version_id) / "artifacts" / DECOMPOSITION_FILE
 
 
 def _normalize_status(value: Any, fallback: str = "valid") -> str:

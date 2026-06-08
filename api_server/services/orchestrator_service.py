@@ -17,6 +17,7 @@ from models.events import dump_event, validate_event_payload
 from services.log_service import format_run_log_entry, get_run_log, run_log_dedupe_key, save_run_log
 from services.db_service import JSON_UNSET, metadata_db
 from services import requirement_decomposition_service, requirement_identity_service
+from services.version_path_resolver import resolve_version_path
 from services.artifact_governance_runtime import finalize_expert_artifact_outputs
 from services.design_artifact_service import sync_artifacts_from_disk
 from services.llm_service import (
@@ -596,7 +597,7 @@ def _merge_clarified_requirements_payload(
 
 def _get_clarified_requirements_snapshot(project_id: str, version: str, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
     payload = _build_clarified_requirements_payload(project_id, version, state=state)
-    project_path = PROJECTS_DIR / project_id / version
+    project_path = resolve_version_path(project_id, version)
     baseline_dir = project_path / "baseline"
     requirements_json_path = baseline_dir / "requirements.json"
     existing_requirements_payload: Dict[str, Any] = {}
@@ -619,7 +620,7 @@ def _get_clarified_requirements_snapshot(project_id: str, version: str, state: D
 
 def _persist_clarification_artifacts(project_id: str, version: str, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
     payload = _build_clarified_requirements_payload(project_id, version, state=state)
-    project_path = PROJECTS_DIR / project_id / version
+    project_path = resolve_version_path(project_id, version)
     baseline_dir = project_path / "baseline"
     baseline_dir.mkdir(parents=True, exist_ok=True)
     clarification_log_path = baseline_dir / "clarification-log.json"
@@ -663,7 +664,7 @@ def _load_persisted_requirement_text(project_id: str, version: str, fallback: st
     if version_requirement:
         return version_requirement
 
-    baseline_dir = PROJECTS_DIR / project_id / version / "baseline"
+    baseline_dir = resolve_version_path(project_id, version) / "baseline"
     for filename in COMPATIBLE_REQUIREMENT_BASELINE_FILES:
         path = baseline_dir / filename
         if path.exists():
@@ -698,7 +699,7 @@ def _write_requirement_baseline_files(
     normalized_requirement = str(requirement_text or "").strip()
     if not normalized_requirement:
         return
-    baseline_dir = PROJECTS_DIR / project_id / version / "baseline"
+    baseline_dir = resolve_version_path(project_id, version) / "baseline"
     baseline_dir.mkdir(parents=True, exist_ok=True)
     path = baseline_dir / PRIMARY_REQUIREMENT_BASELINE_FILE
     try:
@@ -773,6 +774,43 @@ def _merge_human_answers(
 
 def _thread_id(project_id: str, version: str) -> str:
     return f"{project_id}_{version}"
+
+
+def _infer_runtime_model_id(project_id: str, state: dict | None) -> str | None:
+    design_context = (state or {}).get("design_context") or {}
+    model_config = design_context.get("model_config") or {}
+    explicit_id = str(model_config.get("id") or "").strip()
+    if explicit_id:
+        return explicit_id
+
+    model_name = str(model_config.get("model_name") or "").strip()
+    base_url = str(model_config.get("base_url") or "").strip()
+    if not model_name:
+        return None
+
+    try:
+        project_models = metadata_db.list_project_models(project_id, include_secrets=False)
+    except Exception:
+        return None
+
+    for candidate in project_models:
+        if str(candidate.get("model_name") or "").strip() != model_name:
+            continue
+        candidate_base_url = str(candidate.get("base_url") or "").strip()
+        if base_url and candidate_base_url != base_url:
+            continue
+        return str(candidate.get("id") or "").strip() or None
+    return None
+
+
+def _remember_runtime_model_id(project_id: str, version: str, model_id: str | None) -> None:
+    normalized_model_id = str(model_id or "").strip()
+    thread_id = _thread_id(project_id, version)
+    runtime = runtime_registry.setdefault(thread_id, {})
+    if normalized_model_id:
+        runtime["model_id"] = normalized_model_id
+    else:
+        runtime.pop("model_id", None)
 
 
 def _graph_config(project_id: str, version: str, run_id: str | None = None) -> dict:
@@ -1039,13 +1077,20 @@ def _active_job_for_thread(project_id: str, version: str) -> dict | None:
     status = runtime.get("run_status")
     job_id = runtime.get("job_id")
     if job_id and status in ACTIVE_RUN_STATUSES:
-        return {"job_id": job_id, "status": status}
+        model_id = runtime.get("model_id")
+        if not model_id:
+            state = get_workflow_state(project_id, version, include_runtime=False) or {}
+            model_id = _infer_runtime_model_id(project_id, state)
+            if model_id:
+                runtime["model_id"] = model_id
+        return {"job_id": job_id, "status": status, "model_id": model_id}
 
     persisted = metadata_db.get_workflow_run(project_id, version) or {}
     persisted_status = persisted.get("status")
     persisted_job_id = persisted.get("run_id")
     if persisted_job_id and persisted_status in ACTIVE_RUN_STATUSES:
-        return {"job_id": persisted_job_id, "status": persisted_status}
+        state = get_workflow_state(project_id, version, include_runtime=False) or {}
+        return {"job_id": persisted_job_id, "status": persisted_status, "model_id": _infer_runtime_model_id(project_id, state)}
     return None
 
 
@@ -1077,11 +1122,18 @@ def list_active_runs(project_id: str | None = None) -> list[dict]:
         status = runtime.get("run_status")
         job_id = runtime.get("job_id")
         if job_id and status in ACTIVE_RUN_STATUSES:
+            model_id = runtime.get("model_id")
+            if not model_id:
+                state = get_workflow_state(runtime_project_id, version, include_runtime=False) or {}
+                model_id = _infer_runtime_model_id(runtime_project_id, state)
+                if model_id:
+                    runtime["model_id"] = model_id
             active[(runtime_project_id, version)] = {
                 "project_id": runtime_project_id,
                 "version": version,
                 "job_id": job_id,
                 "status": status,
+                "model_id": model_id,
             }
 
     projects = [metadata_db.get_project(project_id)] if project_id else metadata_db.list_projects()
@@ -1105,6 +1157,7 @@ def list_active_runs(project_id: str | None = None) -> list[dict]:
                         "version": version,
                         "job_id": active_job.get("job_id"),
                         "status": active_job.get("status"),
+                        "model_id": active_job.get("model_id"),
                     },
                 )
     return list(active.values())
@@ -1139,7 +1192,7 @@ def _launch_runtime_task(thread_id: str, coro):
 
 
 def _latest_project_timestamp(project_id: str, version: str) -> str:
-    project_root = PROJECTS_DIR / project_id / version
+    project_root = resolve_version_path(project_id, version)
     if not project_root.exists():
         return _now_iso()
 
@@ -1159,7 +1212,7 @@ def _latest_project_timestamp(project_id: str, version: str) -> str:
 
 def _load_artifacts_from_disk(project_id: str, version: str) -> dict:
     artifacts = {}
-    project_root = PROJECTS_DIR / project_id / version
+    project_root = resolve_version_path(project_id, version)
     for dirname in ("baseline", "artifacts", "logs", "evidence", "release"):
         dir_path = project_root / dirname
         if not dir_path.exists():
@@ -1201,7 +1254,7 @@ def _get_registry_expert_outputs() -> dict[str, list[str]]:
 
 
 def _build_legacy_task_queue(project_id: str, version: str) -> list[dict]:
-    project_root = PROJECTS_DIR / project_id / version
+    project_root = resolve_version_path(project_id, version)
     logs_dir = project_root / "logs"
     baseline_file = project_root / "baseline" / "requirements.json"
 
@@ -1475,7 +1528,7 @@ def _build_node_llm_map(project_id: str, version: str, state: dict, task_queue: 
     fallback_provider = str(model_config.get("provider") or "").strip().lower() or None
 
     latest_by_node: dict[str, dict] = {}
-    log_file = BASE_DIR / "projects" / project_id / version / "logs" / "llm_interactions.jsonl"
+    log_file = resolve_version_path(project_id, version) / "logs" / "llm_interactions.jsonl"
     if log_file.exists():
         try:
             with open(log_file, "r", encoding="utf-8") as handle:
@@ -2626,6 +2679,7 @@ def _build_graph_input_state(
             model_config = next((m for m in project_models if m["id"] == model), None)
             if model_config:
                 design_context["model_config"] = {
+                    "id": model_config["id"],
                     "provider": model_config["provider"],
                     "api_key": model_config["api_key"],
                     "base_url": model_config["base_url"],
@@ -2699,7 +2753,7 @@ async def run_orchestrator_task(
     _emit_node_started(job_id, job_id, "bootstrap", "bootstrap", project_id=project_id, version_id=version)
 
     try:
-        project_path = PROJECTS_DIR / project_id / version
+        project_path = resolve_version_path(project_id, version)
         baseline_path = project_path / "baseline"
         baseline_path.mkdir(parents=True, exist_ok=True)
         (project_path / "logs").mkdir(parents=True, exist_ok=True)
@@ -2718,6 +2772,7 @@ async def run_orchestrator_task(
             feedback=feedback,
             model=model,
         )
+        _remember_runtime_model_id(project_id, version, _infer_runtime_model_id(project_id, initial_state) or model)
         if not preflight_checked:
             preflight_result = await asyncio.to_thread(
                 _run_llm_connectivity_preflight,
@@ -3320,6 +3375,7 @@ async def retry_workflow_node(
 
     _delete_checkpoint_state(project_id, version)
     _ensure_job(run_id)
+    _remember_runtime_model_id(project_id, version, model or _infer_runtime_model_id(project_id, current_state))
     _set_runtime_state(
         project_id,
         version,
@@ -3595,6 +3651,7 @@ async def continue_workflow(
     _delete_checkpoint_state(project_id, version)
     _ensure_job(run_id)
     jobs[run_id]["status"] = RUN_STATUS_RUNNING
+    _remember_runtime_model_id(project_id, version, model or _infer_runtime_model_id(project_id, current_state))
 
     _set_runtime_state(
         project_id,
@@ -3845,7 +3902,7 @@ async def schedule_orchestrator_run(
     )
     _write_requirement_baseline_files(project_id, version, requirement_text, overwrite=True)
 
-    project_root = PROJECTS_DIR / project_id / version
+    project_root = resolve_version_path(project_id, version)
     project_root.mkdir(parents=True, exist_ok=True)
 
     existing_state = get_workflow_state(project_id, version)
@@ -3942,6 +3999,7 @@ def trigger_orchestrator(
         can_resume=False,
         job_id=job_id,
     )
+    _remember_runtime_model_id(project_id, version, model)
     _launch_runtime_task(
         _thread_id(project_id, version),
         run_orchestrator_task(
@@ -4049,7 +4107,7 @@ def delete_version(project_id: str, version: str) -> bool:
     if has_active_runtime and state and state.get("run_status") in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
         return False
 
-    project_version_dir = PROJECTS_DIR / project_id / version
+    project_version_dir = resolve_version_path(project_id, version)
     if not project_version_dir.exists():
         return False
 

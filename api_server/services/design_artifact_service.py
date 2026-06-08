@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from services.db_service import metadata_db
+from services.version_path_resolver import resolve_version_path
 from subgraphs.context_conflict_checker import classify_revision_feedback
 from subgraphs.expert_reflection import record_reflection_observation
 
@@ -117,7 +118,7 @@ def _safe_slug(value: str) -> str:
 
 
 def _project_version_root(project_id: str, version_id: str) -> Path:
-    return PROJECTS_DIR / project_id / version_id
+    return resolve_version_path(project_id, version_id)
 
 
 def _resolve_artifact_path(project_id: str, version_id: str, file_name: str) -> Optional[Path]:

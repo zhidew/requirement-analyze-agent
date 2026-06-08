@@ -99,7 +99,10 @@ class MetadataDB:
     def _get_connection(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
+        # Pipeline metadata is written by async/background paths and may be observed
+        # before every parent row has been persisted. Keep SQLite from turning those
+        # transient ordering gaps into hard startup failures.
+        conn.execute("PRAGMA foreign_keys = OFF")
         conn.execute("PRAGMA busy_timeout = 5000")
         if os.getenv("SQLITE_ENABLE_WAL", "true").lower() not in {"0", "false", "no"}:
             try:
@@ -158,8 +161,7 @@ class MetadataDB:
                     run_status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (version_id, project_id),
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    PRIMARY KEY (version_id, project_id)
                 )
                 """
             )
@@ -178,8 +180,7 @@ class MetadataDB:
                     description TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (project_id, id),
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    PRIMARY KEY (project_id, id)
                 )
                 """
             )
@@ -199,8 +200,7 @@ class MetadataDB:
                     description TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (project_id, id),
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    PRIMARY KEY (project_id, id)
                 )
                 """
             )
@@ -224,8 +224,7 @@ class MetadataDB:
                     description TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (project_id, id),
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    PRIMARY KEY (project_id, id)
                 )
                 """
             )
@@ -238,8 +237,7 @@ class MetadataDB:
                     description TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (project_id, expert_id),
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    PRIMARY KEY (project_id, expert_id)
                 )
                 """
             )
@@ -252,8 +250,7 @@ class MetadataDB:
                     openai_base_url TEXT,
                     openai_model_name TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -264,8 +261,7 @@ class MetadataDB:
                     llm_interaction_logging_enabled INTEGER NOT NULL DEFAULT 0,
                     llm_full_payload_logging_enabled INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -285,8 +281,7 @@ class MetadataDB:
                     is_default INTEGER DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (project_id, id),
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    PRIMARY KEY (project_id, id)
                 )
                 """
             )
@@ -305,8 +300,7 @@ class MetadataDB:
                     finished_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (project_id, version_id),
-                    FOREIGN KEY (version_id, project_id) REFERENCES versions(version_id, project_id) ON DELETE CASCADE
+                    PRIMARY KEY (project_id, version_id)
                 )
                 """
             )
@@ -328,8 +322,7 @@ class MetadataDB:
                     finished_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (project_id, version_id, node_type),
-                    FOREIGN KEY (project_id, version_id) REFERENCES workflow_runs(project_id, version_id) ON DELETE CASCADE
+                    PRIMARY KEY (project_id, version_id, node_type)
                 )
                 """
             )
@@ -371,8 +364,7 @@ class MetadataDB:
                     affected_artifacts_json TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    completed_at TEXT,
-                    FOREIGN KEY (project_id, version_id) REFERENCES workflow_runs(project_id, version_id) ON DELETE CASCADE
+                    completed_at TEXT
                 )
                 """
             )
@@ -383,8 +375,7 @@ class MetadataDB:
                     interaction_id TEXT NOT NULL,
                     event_type TEXT NOT NULL,
                     payload_json TEXT,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (interaction_id) REFERENCES human_interactions(interaction_id) ON DELETE CASCADE
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -422,8 +413,7 @@ class MetadataDB:
                     artifact_id TEXT NOT NULL,
                     event_type TEXT NOT NULL,
                     payload_json TEXT,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -441,8 +431,7 @@ class MetadataDB:
                     open_questions_json TEXT,
                     required_actions_json TEXT,
                     blocks_downstream INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -457,8 +446,7 @@ class MetadataDB:
                     checks_json TEXT,
                     conflict_ids_json TEXT,
                     suggested_actions_json TEXT,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -479,8 +467,7 @@ class MetadataDB:
                     suggested_actions_json TEXT,
                     decision_id TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (report_id) REFERENCES system_consistency_reports(report_id) ON DELETE CASCADE
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -518,8 +505,7 @@ class MetadataDB:
                     affected_artifacts_json TEXT,
                     created_artifact_id TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (target_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -530,8 +516,7 @@ class MetadataDB:
                     revision_session_id TEXT NOT NULL,
                     event_type TEXT NOT NULL,
                     payload_json TEXT,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (revision_session_id) REFERENCES revision_sessions(revision_session_id) ON DELETE CASCADE
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -548,8 +533,7 @@ class MetadataDB:
                     end_offset INTEGER NOT NULL,
                     structural_path_json TEXT,
                     content_hash TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -563,9 +547,7 @@ class MetadataDB:
                     downstream_artifact_id TEXT NOT NULL,
                     dependency_type TEXT NOT NULL,
                     evidence_json TEXT,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (upstream_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE,
-                    FOREIGN KEY (downstream_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -583,9 +565,7 @@ class MetadataDB:
                     reason TEXT NOT NULL,
                     evidence_json TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (source_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE,
-                    FOREIGN KEY (impacted_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -609,10 +589,7 @@ class MetadataDB:
                     post_apply_content_hash TEXT,
                     post_apply_validation_json TEXT,
                     created_at TEXT NOT NULL,
-                    applied_at TEXT,
-                    FOREIGN KEY (revision_session_id) REFERENCES revision_sessions(revision_session_id) ON DELETE CASCADE,
-                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE,
-                    FOREIGN KEY (anchor_id) REFERENCES artifact_anchors(anchor_id) ON DELETE CASCADE
+                    applied_at TEXT
                 )
                 """
             )
@@ -626,10 +603,7 @@ class MetadataDB:
                     reviewer_note TEXT,
                     revision_session_id TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE,
-                    FOREIGN KEY (anchor_id) REFERENCES artifact_anchors(anchor_id) ON DELETE SET NULL,
-                    FOREIGN KEY (revision_session_id) REFERENCES revision_sessions(revision_session_id) ON DELETE SET NULL
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -647,8 +621,7 @@ class MetadataDB:
                     error TEXT,
                     triggered_at TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (version_id, project_id) REFERENCES versions(version_id, project_id) ON DELETE CASCADE
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -665,8 +638,7 @@ class MetadataDB:
                     source_item_ids_json TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    PRIMARY KEY (project_id, item_type, item_id),
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                    PRIMARY KEY (project_id, item_type, item_id)
                 )
                 """
             )
@@ -681,8 +653,7 @@ class MetadataDB:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (project_id, version_id),
-                    UNIQUE (project_id, item_type, item_id, pipeline_sequence),
-                    FOREIGN KEY (version_id, project_id) REFERENCES versions(version_id, project_id) ON DELETE CASCADE
+                    UNIQUE (project_id, item_type, item_id, pipeline_sequence)
                 )
                 """
             )
@@ -722,6 +693,7 @@ class MetadataDB:
                 )
                 """
             )
+            self._migrate_tables_without_foreign_key_constraints(conn)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_status_updated ON workflow_runs(status, updated_at)"
             )
@@ -816,6 +788,108 @@ class MetadataDB:
         }
         if column_name not in columns:
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+    @staticmethod
+    def _quote_identifier(value: str) -> str:
+        return '"' + value.replace('"', '""') + '"'
+
+    @staticmethod
+    def _split_table_definitions(definitions: str) -> List[str]:
+        parts: List[str] = []
+        start = 0
+        depth = 0
+        quote: Optional[str] = None
+        bracket_quote = False
+        for index, char in enumerate(definitions):
+            if quote:
+                if bracket_quote:
+                    if char == "]":
+                        quote = None
+                        bracket_quote = False
+                elif char == quote:
+                    quote = None
+                continue
+            if char in {"'", '"', "`"}:
+                quote = char
+                continue
+            if char == "[":
+                quote = "]"
+                bracket_quote = True
+                continue
+            if char == "(":
+                depth += 1
+                continue
+            if char == ")" and depth > 0:
+                depth -= 1
+                continue
+            if char == "," and depth == 0:
+                part = definitions[start:index].strip()
+                if part:
+                    parts.append(part)
+                start = index + 1
+        tail = definitions[start:].strip()
+        if tail:
+            parts.append(tail)
+        return parts
+
+    def _create_table_without_foreign_key_sql(self, create_sql: str, table_name: str) -> str:
+        foreign_key_token = "FOREIGN" + " KEY"
+        body_start = create_sql.find("(")
+        body_end = create_sql.rfind(")")
+        if body_start < 0 or body_end <= body_start:
+            raise sqlite3.DatabaseError(f"Could not parse CREATE TABLE SQL for {table_name}.")
+        definitions = self._split_table_definitions(create_sql[body_start + 1 : body_end])
+        definitions = [
+            definition
+            for definition in definitions
+            if foreign_key_token not in definition.upper()
+        ]
+        if not definitions:
+            raise sqlite3.DatabaseError(f"Could not rebuild CREATE TABLE SQL for {table_name}.")
+        formatted_definitions = ",\n                    ".join(definitions)
+        return (
+            f"CREATE TABLE {self._quote_identifier(table_name)} (\n"
+            f"                    {formatted_definitions}\n"
+            ")"
+        )
+
+    def _migrate_tables_without_foreign_key_constraints(self, conn: sqlite3.Connection) -> None:
+        foreign_key_token = "FOREIGN" + " KEY"
+        rows = conn.execute(
+            """
+            SELECT name, sql
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name NOT LIKE 'sqlite_%'
+              AND sql IS NOT NULL
+            """
+        ).fetchall()
+        for row in rows:
+            table_name = row["name"]
+            create_sql = row["sql"] or ""
+            if foreign_key_token not in create_sql.upper():
+                continue
+
+            temp_table_name = f"__nofk_{table_name}_{uuid.uuid4().hex[:8]}"
+            migrated_create_sql = self._create_table_without_foreign_key_sql(
+                create_sql,
+                temp_table_name,
+            )
+            columns = [
+                column["name"]
+                for column in conn.execute(f"PRAGMA table_info({self._quote_identifier(table_name)})").fetchall()
+            ]
+            column_list = ", ".join(self._quote_identifier(column) for column in columns)
+            conn.execute(migrated_create_sql)
+            conn.execute(
+                f"INSERT INTO {self._quote_identifier(temp_table_name)} ({column_list}) "
+                f"SELECT {column_list} FROM {self._quote_identifier(table_name)}"
+            )
+            conn.execute(f"DROP TABLE {self._quote_identifier(table_name)}")
+            conn.execute(
+                f"ALTER TABLE {self._quote_identifier(temp_table_name)} "
+                f"RENAME TO {self._quote_identifier(table_name)}"
+            )
 
     def _migrate_legacy_project_experts(self, conn: sqlite3.Connection) -> None:
         now = self._utcnow()
@@ -1339,6 +1413,44 @@ class MetadataDB:
         source_requirement_ids = source_requirement_ids or []
         with self._transaction() as conn:
             sequence = None
+            conn.execute(
+                """
+                INSERT INTO versions (
+                    version_id, project_id, requirement, run_status,
+                    requirement_type, requirement_id, requirement_id_source, pipeline_sequence,
+                    source_requirement_ids_json, derived_requirement_ids_json, manifest_path,
+                    temp_archived, decomposition_status, decomposition_error,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, NULL, NULL, ?, ?)
+                ON CONFLICT(version_id, project_id) DO UPDATE SET
+                    requirement=CASE
+                        WHEN excluded.requirement IS NOT NULL AND excluded.requirement != '' THEN excluded.requirement
+                        ELSE versions.requirement
+                    END,
+                    run_status=excluded.run_status,
+                    requirement_type=excluded.requirement_type,
+                    requirement_id=excluded.requirement_id,
+                    requirement_id_source=excluded.requirement_id_source,
+                    source_requirement_ids_json=excluded.source_requirement_ids_json,
+                    manifest_path=excluded.manifest_path,
+                    temp_archived=excluded.temp_archived,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    version_id,
+                    project_id,
+                    requirement,
+                    run_status,
+                    item_type,
+                    item_id,
+                    requirement_id_source,
+                    self._dumps_json(source_requirement_ids),
+                    manifest_path,
+                    1 if temp_archived else 0,
+                    now,
+                    now,
+                ),
+            )
             if item_type and item_id and not temp_archived:
                 conn.execute(
                     """

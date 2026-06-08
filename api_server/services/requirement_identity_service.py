@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from services.db_service import metadata_db
+from services.version_path_resolver import resolve_version_path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-PROJECTS_DIR = BASE_DIR / "projects"
 DEFAULT_REQUIREMENT_TYPE = "RR" if BASE_DIR.name == "requirement-analyze-agent" else "IR"
 VALID_REQUIREMENT_TYPES = {"RR", "IR", "US"}
 MAX_REQUIREMENT_ID_LENGTH = 128
@@ -48,7 +48,13 @@ def normalize_requirement_id(requirement_id: Optional[str]) -> Optional[str]:
 
 
 def _version_dir(project_id: str, version_id: str) -> Path:
-    return PROJECTS_DIR / project_id / version_id
+    return resolve_version_path(project_id, version_id)
+
+
+def _planned_version_relative_path(project_id: str, version_id: str, requirement_id: Optional[str]) -> str:
+    if requirement_id:
+        return f"projects/{project_id}/{requirement_id}/{version_id}"
+    return f"projects/{project_id}/temp/version-snapshots/{version_id}"
 
 
 def _manifest_payload(version_record: Dict[str, Any], *, status: Optional[str] = None) -> Dict[str, Any]:
@@ -101,11 +107,12 @@ def prepare_version(
     normalized_type = normalize_requirement_type(requirement_type)
     normalized_id = normalize_requirement_id(requirement_id)
     source_ids = _normalize_string_list(source_requirement_ids)
-    project_root = _version_dir(project_id, version_id)
+    project_relative_path = _planned_version_relative_path(project_id, version_id, normalized_id)
+    project_root = BASE_DIR / project_relative_path
     project_root.mkdir(parents=True, exist_ok=True)
     (project_root / "baseline").mkdir(parents=True, exist_ok=True)
     (project_root / "logs").mkdir(parents=True, exist_ok=True)
-    manifest_path = f"projects/{project_id}/{version_id}/manifest.json"
+    manifest_path = f"{project_relative_path}/manifest.json"
 
     temp_archived = normalized_id is None
     version_record = metadata_db.prepare_requirement_version(
@@ -121,6 +128,7 @@ def prepare_version(
         run_status=run_status,
         temp_archived=temp_archived,
         archive_reason="missing_requirement_id",
+        temp_path=project_relative_path if temp_archived else None,
     )
     manifest = write_requirement_manifest(project_id, version_id, status=run_status)
     return {

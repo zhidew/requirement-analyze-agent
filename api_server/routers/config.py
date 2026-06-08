@@ -136,6 +136,44 @@ def _assert_no_active_project_run(project_id: str):
         raise HTTPException(status_code=409, detail=conflict)
 
 
+def _active_model_conflict_detail(project_id: str, model_id: str, *, mutates_default: bool = False) -> dict | None:
+    active_runs = list_active_runs(project_id)
+    if not active_runs:
+        return None
+
+    normalized_model_id = str(model_id or "").strip()
+    matching_runs = [
+        run
+        for run in active_runs
+        if str(run.get("model_id") or "").strip() == normalized_model_id
+    ]
+    if matching_runs:
+        return {
+            "message": f"Model config '{normalized_model_id}' cannot be changed while it is used by an active workflow run.",
+            "active_runs": matching_runs,
+        }
+
+    if mutates_default:
+        unknown_model_runs = [
+            run
+            for run in active_runs
+            if not str(run.get("model_id") or "").strip()
+        ]
+        if unknown_model_runs:
+            return {
+                "message": "Default model config cannot be changed while an active workflow run has no recorded model snapshot.",
+                "active_runs": unknown_model_runs,
+            }
+
+    return None
+
+
+def _assert_model_not_used_by_active_project_run(project_id: str, model_id: str, *, mutates_default: bool = False) -> None:
+    conflict = _active_model_conflict_detail(project_id, model_id, mutates_default=mutates_default)
+    if conflict:
+        raise HTTPException(status_code=409, detail=conflict)
+
+
 def _get_expert_phase_assignment(expert_id: str) -> str:
     try:
         orchestration = get_phase_orchestration()
@@ -299,15 +337,25 @@ async def list_project_models(project_id: str):
 @router.post("/models")
 async def save_project_model_config(project_id: str, req: ModelConfig):
     _require_project(project_id)
-    _assert_no_active_project_run(project_id)
     payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    existing = metadata_db.get_project_model(project_id, payload.get("id"), include_secrets=False)
+    _assert_model_not_used_by_active_project_run(
+        project_id,
+        payload.get("id"),
+        mutates_default=bool(payload.get("is_default") or (existing or {}).get("is_default")),
+    )
     return metadata_db.upsert_project_model(project_id, payload)
 
 
 @router.delete("/models/{model_id}")
 async def delete_project_model_config(project_id: str, model_id: str):
     _require_project(project_id)
-    _assert_no_active_project_run(project_id)
+    existing = metadata_db.get_project_model(project_id, model_id, include_secrets=False)
+    _assert_model_not_used_by_active_project_run(
+        project_id,
+        model_id,
+        mutates_default=bool((existing or {}).get("is_default")),
+    )
     deleted = metadata_db.delete_project_model(project_id, model_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Model config '{model_id}' not found.")

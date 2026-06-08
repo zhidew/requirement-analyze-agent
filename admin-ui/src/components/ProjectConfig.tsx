@@ -6,6 +6,7 @@ import { api, formatApiErrorMessage, type DebugConfig } from '../api';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
 type TabKey = 'repositories' | 'databases' | 'knowledge' | 'experts' | 'llm' | 'danger';
+type OperationResult = { success: boolean; message: string; context?: 'test' | 'save' | 'delete' };
 
 interface AssetsSummary {
   exists: boolean;
@@ -274,7 +275,7 @@ export function ProjectConfig() {
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
   const [testingModel, setTestingModel] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<OperationResult | null>(null);
 
   // Repository modal & test states
   const [isRepoModalOpen, setIsRepoModalOpen] = useState(false);
@@ -308,9 +309,9 @@ export function ProjectConfig() {
     setTestResult(null);
     try {
       const res = await api.testProjectModel(projectId, normalizeModelPayload(editingModel));
-      setTestResult(res);
+      setTestResult({ ...res, context: 'test' });
     } catch (err: unknown) {
-      setTestResult({ success: false, message: formatApiErrorMessage(err, t('common.error'), i18n.language) });
+      setTestResult({ success: false, message: formatApiErrorMessage(err, t('common.error'), i18n.language), context: 'test' });
     } finally {
       setTestingModel(false);
     }
@@ -738,7 +739,7 @@ export function ProjectConfig() {
     } catch (error: unknown) {
       setSaving(false);
       setIsSaved(false);
-      setTestResult({ success: false, message: formatApiErrorMessage(error, 'Failed to save model.', i18n.language) });
+      setTestResult({ success: false, message: formatApiErrorMessage(error, llmCopy.saveError, i18n.language), context: 'save' });
     }
   };
 
@@ -770,7 +771,7 @@ export function ProjectConfig() {
       await api.deleteProjectModel(projectId, modelId);
       await loadAll();
     } catch (error: unknown) {
-      setTestResult({ success: false, message: formatApiErrorMessage(error, llmCopy.deleteModel, i18n.language) });
+      setTestResult({ success: false, message: formatApiErrorMessage(error, llmCopy.deleteModel, i18n.language), context: 'delete' });
     }
   };
 
@@ -1648,7 +1649,9 @@ export function ProjectConfig() {
                                 {testResult.success ? 'Success' : 'Error'}
                               </p>
                               <p className="text-[11px] font-medium leading-normal break-words opacity-90">
-                                {testResult.success ? llmCopy.testSuccess : `${llmCopy.testFailed} ${testResult.message}`}
+                                {testResult.success
+                                  ? (testResult.context === 'test' ? llmCopy.testSuccess : testResult.message)
+                                  : (testResult.context === 'test' ? `${llmCopy.testFailed} ${testResult.message}` : testResult.message)}
                               </p>
                             </div>
                           </div>

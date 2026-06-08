@@ -12,6 +12,7 @@ from services.llm_service import SubagentOutput, generate_with_llm, resolve_runt
 from .state import DesignState, Task
 from .tools import execute_tool
 from services.db_service import metadata_db
+from services.version_path_resolver import resolve_version_path
 from subgraphs.dynamic_subagent import run_dynamic_subagent
 from subgraphs.topic_ownership import build_topic_ownership_payload as build_topic_ownership_payload_from_registry
 
@@ -1533,7 +1534,7 @@ async def bootstrap_node(state: DesignState) -> Dict[str, Any]:
     project_id = state["project_id"]
     version = state["version"]
     requirement_text = state.get("requirement", "")
-    project_path = BASE_DIR / "projects" / project_id / version
+    project_path = resolve_version_path(project_id, version)
     baseline_dir = project_path / "baseline"
     logs_dir = project_path / "logs"
 
@@ -1606,7 +1607,7 @@ async def requirement_clarifier_node(state: DesignState) -> Dict[str, Any]:
     project_id = state["project_id"]
     version = state["version"]
     requirement_text = state.get("requirement", "")
-    project_path = BASE_DIR / "projects" / project_id / version
+    project_path = resolve_version_path(project_id, version)
     baseline_dir = project_path / "baseline"
     logs_dir = project_path / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -1734,7 +1735,7 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
     project_id = state["project_id"]
     version = state["version"]
     requirement_text = state.get("requirement", "")
-    project_path = BASE_DIR / "projects" / project_id / version
+    project_path = resolve_version_path(project_id, version)
     baseline_dir = project_path / "baseline"
 
     list_files_result = execute_tool("list_files", {"root_dir": str(baseline_dir)})

@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from graphs.tools.permissions import DEFAULT_READ_TOOLS, DEFAULT_WRITE_TOOLS, build_effective_tools
 from services.llm_service import SubagentOutput, resolve_runtime_llm_settings
+from services.version_path_resolver import resolve_version_path
 from registry.expert_runtime_profile import ExpertRuntimeProfile, resolve_expert_runtime_profile
 from subgraphs.artifact_dependencies import (
     discover_upstream_artifacts as _discover_upstream_artifacts_from_profiles,
@@ -3996,7 +3997,7 @@ async def run_dynamic_subagent(
     
     project_id = state["project_id"]
     version = state["version"]
-    project_path = base_dir / "projects" / project_id / version
+    project_path = resolve_version_path(project_id, version)
     baseline_path = project_path / "baseline" / "requirements.json"
     baseline_dir = baseline_path.parent
     artifacts_dir = project_path / "artifacts"

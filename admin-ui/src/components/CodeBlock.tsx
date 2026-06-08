@@ -40,11 +40,11 @@ export const CodeBlock = (props: any) => {
           {({ className, style, tokens, getLineProps, getTokenProps }) => (
             <pre className={`${className} p-4 overflow-x-auto text-sm leading-relaxed`} style={{ ...style, backgroundColor: '#fdfdfd' }}>
               {tokens.map((line, i) => {
-                const lineProps = getLineProps({ line, key: i });
+                const { key: _lineKey, ...lineProps } = getLineProps({ line, key: i }) as any;
                 return (
                   <div key={i} {...lineProps}>
                     {line.map((token, key) => {
-                      const tokenProps = getTokenProps({ token, key });
+                      const { key: _tokenKey, ...tokenProps } = getTokenProps({ token, key }) as any;
                       return <span key={key} {...tokenProps} />;
                     })}
                   </div>

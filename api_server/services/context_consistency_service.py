@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from services.db_service import metadata_db
+from services.version_path_resolver import resolve_version_path
 from subgraphs.context_conflict_checker import (
     build_conflict,
     classify_upstream_status,
@@ -26,7 +27,7 @@ def _sha256_text(value: str) -> str:
 
 
 def _project_version_root(project_id: str, version_id: str) -> Path:
-    return PROJECTS_DIR / project_id / version_id
+    return resolve_version_path(project_id, version_id)
 
 
 def _read_artifact_file(artifact: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
