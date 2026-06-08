@@ -2391,15 +2391,11 @@ export function ProjectDetail() {
   const renderVersionRow = (v: string) => {
     const summary = versionStateMap[v];
     const metadata = versionMetadataMap[v] || {};
-    const requirementType = summary?.requirement_type || metadata.requirement_type;
-    const requirementIdValue = summary?.requirement_id || metadata.requirement_id;
-    const pipelineSequence = summary?.pipeline_sequence ?? metadata.pipeline_sequence;
-    const isTemp = Boolean(summary?.temp_archived ?? metadata.temp_archived);
     const statusMeta = getVersionStatusMeta(summary?.run_status || metadata.run_status);
     return (
       <div
         key={v}
-        className={`w-full flex items-center justify-between gap-3 p-4 rounded-2xl transition-all text-xs text-left ${selectedVersion === v
+        className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl transition-all text-xs text-left ${selectedVersion === v
             ? 'bg-white border-2 border-indigo-500 shadow-md text-gray-900 font-bold'
             : 'bg-transparent border border-transparent text-gray-500 hover:bg-gray-100'
           }`}
@@ -2409,13 +2405,6 @@ export function ProjectDetail() {
           className="min-w-0 flex-1 text-left"
         >
           <div className="font-mono truncate">{v}</div>
-          <div className="mt-1 truncate text-[10px] font-black uppercase tracking-wider text-gray-400">
-            {requirementIdValue
-              ? `${requirementType || 'REQ'} ${requirementIdValue}${pipelineSequence ? ` #${pipelineSequence}` : ''}`
-              : isTemp
-                ? 'Temp / 未绑定'
-                : 'Legacy / 未绑定'}
-          </div>
           <div className="mt-2 flex items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${statusMeta.dot}`} />
             <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-wider ${statusMeta.pill}`}>
@@ -2455,7 +2444,7 @@ export function ProjectDetail() {
       }
       const key = `${requirementType || 'REQ'}:${requirementIdValue}`;
       if (!groupMap.has(key)) {
-        const group = { key, label: `${requirementType || 'REQ'} ${requirementIdValue}`, versions: [] };
+        const group = { key, label: requirementIdValue, versions: [] };
         groupMap.set(key, group);
         groups.push(group);
       }
@@ -2675,13 +2664,10 @@ export function ProjectDetail() {
             </div>
             <div className="space-y-2">
               {groupedVersions.map((group) => (
-                <div key={group.key} className="space-y-2">
-                  <div className="flex items-center justify-between px-2 pt-2">
-                    <div className="min-w-0 truncate text-[10px] font-black uppercase tracking-wider text-gray-500">
+                <div key={group.key} className="space-y-2 rounded-xl border border-gray-100 bg-white/60 p-2">
+                  <div className="px-2 pt-1">
+                    <div className="min-w-0 truncate text-[11px] font-black text-gray-700">
                       {group.label}
-                    </div>
-                    <div className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[9px] font-black text-gray-400">
-                      {group.versions.length}
                     </div>
                   </div>
                   {group.versions.map((version) => renderVersionRow(version))}
