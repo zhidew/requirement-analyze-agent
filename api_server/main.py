@@ -60,6 +60,14 @@ async def lifespan(app: FastAPI):
         print("[Startup] Scheduled runs restored")
     except Exception as e:
         print(f"[Startup] Failed to restore scheduled runs: {e}")
+
+    try:
+        if os.getenv("ORCHESTRATOR_STARTUP_RECONCILE_STALE", "true").strip().lower() not in {"0", "false", "no"}:
+            reconcile_result = orch.reconcile_all_project_runtimes(dry_run=False)
+            action_count = sum(len(project.get("actions", [])) for project in reconcile_result.get("projects", []))
+            print(f"[Startup] Stale runtime reconciliation completed, actions={action_count}")
+    except Exception as e:
+        print(f"[Startup] Failed to reconcile stale runtime state: {e}")
     
     yield  # Application runs here
     

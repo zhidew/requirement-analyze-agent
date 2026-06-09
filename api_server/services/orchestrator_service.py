@@ -69,11 +69,13 @@ PLANNER_EXPERT_SELECTION_WAIT_LOG_MARKERS = (
     "Planner has finished the initial expert recommendation",
 )
 STALE_RUNNING_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_STALE_TIMEOUT_SECONDS", "180"))
+STATE_CACHE_TTL_SECONDS = float(os.getenv("ORCHESTRATOR_STATE_CACHE_TTL_SECONDS", "1.5"))
 
 jobs = {}
 runtime_registry = {}
 runtime_tasks = {}
 scheduled_runtime_tasks = {}
+state_cache: dict[str, dict] = {}
 RESERVED_PROJECT_DIR_NAMES = {"cloned_repos"}
 
 
@@ -950,6 +952,7 @@ def _set_runtime_state(
         started_at=started_at,
         finished_at=finished_at,
     )
+    state_cache.pop(thread_id, None)
 
 
 def _mark_workflow_failed(
@@ -3012,13 +3015,31 @@ async def run_orchestrator_task(
 
 def get_workflow_state(project_id: str, version: str, include_runtime: bool = True):
     config = _graph_config(project_id, version)
-    runtime = runtime_registry.get(_thread_id(project_id, version), {}) if include_runtime else {}
+    thread_id = _thread_id(project_id, version)
+    runtime = runtime_registry.get(thread_id, {}) if include_runtime else {}
+    if include_runtime and STATE_CACHE_TTL_SECONDS > 0:
+        cached = state_cache.get(thread_id)
+        now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        runtime_updated_at = runtime.get("updated_at")
+        if (
+            cached
+            and cached.get("runtime_updated_at") == runtime_updated_at
+            and now_ts - float(cached.get("cached_at") or 0) <= STATE_CACHE_TTL_SECONDS
+        ):
+            return dict(cached.get("state") or {})
     try:
         with _graph_for_state() as design_graph:
             try:
                 state = design_graph.get_state(config)
                 if state and state.values:
-                    return _normalize_state(project_id, version, state.values, runtime=runtime)
+                    normalized = _normalize_state(project_id, version, state.values, runtime=runtime)
+                    if include_runtime and normalized:
+                        state_cache[thread_id] = {
+                            "cached_at": datetime.datetime.now(datetime.timezone.utc).timestamp(),
+                            "runtime_updated_at": runtime.get("updated_at"),
+                            "state": dict(normalized),
+                        }
+                    return normalized
             except Exception as e:
                 print(f"[Orchestrator] Error getting graph state for {project_id}/{version}: {e}")
 
@@ -3040,7 +3061,14 @@ def get_workflow_state(project_id: str, version: str, include_runtime: bool = Tr
                 "human_answers": _build_human_answers_from_interactions(project_id, version),
                 "pending_interrupt": _pending_interrupt_from_interaction_record(pending_interaction),
             }
-        return _normalize_state(project_id, version, fallback_state, runtime=runtime)
+        normalized = _normalize_state(project_id, version, fallback_state, runtime=runtime)
+        if include_runtime and normalized:
+            state_cache[thread_id] = {
+                "cached_at": datetime.datetime.now(datetime.timezone.utc).timestamp(),
+                "runtime_updated_at": runtime.get("updated_at"),
+                "state": dict(normalized),
+            }
+        return normalized
     except Exception as e:
         print(f"[Orchestrator] Critical error in get_workflow_state for {project_id}/{version}: {e}")
         return _normalize_state(project_id, version, None, runtime=runtime)
@@ -4088,6 +4116,37 @@ def list_projects():
     return metadata_db.list_projects(runtime_states=runtime_registry)
 
 
+def _version_runtime_summary(project_id: str, version_row: dict) -> dict:
+    version = str(version_row.get("version_id") or "").strip()
+    runtime = runtime_registry.get(_thread_id(project_id, version), {}) if version else {}
+    workflow_status = version_row.get("workflow_status")
+    workflow_run_id = version_row.get("workflow_run_id")
+    workflow_current_node = version_row.get("workflow_current_node")
+    workflow_waiting_reason = version_row.get("workflow_waiting_reason")
+    workflow_updated_at = version_row.get("workflow_updated_at")
+
+    run_status = runtime.get("run_status") or workflow_status or version_row.get("run_status") or "unknown"
+    current_node = runtime.get("current_node") or workflow_current_node
+    run_id = runtime.get("job_id") or workflow_run_id
+    waiting_reason = runtime.get("waiting_reason") or workflow_waiting_reason
+    updated_at = runtime.get("updated_at") or workflow_updated_at or version_row.get("updated_at")
+    can_resume = runtime.get("can_resume")
+    if can_resume is None:
+        can_resume = run_status in {RUN_STATUS_WAITING_HUMAN, RUN_STATUS_FAILED}
+    if run_status in {RUN_STATUS_SCHEDULED, RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
+        can_resume = False
+
+    return {
+        **version_row,
+        "run_status": run_status,
+        "current_node": current_node,
+        "run_id": run_id,
+        "can_resume": bool(can_resume),
+        "waiting_reason": waiting_reason,
+        "updated_at": updated_at,
+    }
+
+
 def create_project(project_id: str, name: Optional[str] = None, description: Optional[str] = None):
     (PROJECTS_DIR / project_id).mkdir(parents=True, exist_ok=True)
     metadata_db.upsert_project(project_id, name or project_id, description)
@@ -4109,8 +4168,99 @@ def create_project(project_id: str, name: Optional[str] = None, description: Opt
 
 def list_versions(project_id: str, page: int = 1, page_size: int = 10):
     _sync_legacy_version_dirs(project_id)
-    
-    return metadata_db.list_versions(project_id, page, page_size)
+    result = metadata_db.list_versions(project_id, page, page_size)
+    result["versions"] = [
+        _version_runtime_summary(project_id, version_row)
+        for version_row in result.get("versions", [])
+    ]
+    return result
+
+
+def diagnose_project_runtime(project_id: str) -> dict:
+    versions_data = metadata_db.list_versions(project_id, page=1, page_size=10000)
+    diagnostics = []
+    for version_row in versions_data.get("versions", []):
+        version = version_row.get("version_id")
+        if not version:
+            continue
+        thread_id = _thread_id(project_id, version)
+        runtime = runtime_registry.get(thread_id) or {}
+        task = runtime_tasks.get(thread_id)
+        workflow_status = version_row.get("workflow_status")
+        db_status = version_row.get("run_status")
+        summary = _version_runtime_summary(project_id, version_row)
+        summary_status = summary.get("run_status")
+        is_stale_candidate_status = summary_status in {
+            RUN_STATUS_QUEUED,
+            "preflight",
+            RUN_STATUS_RUNNING,
+            "cancelling",
+        }
+        has_active_task = bool(task and not task.done())
+        diagnostics.append({
+            "project_id": project_id,
+            "version": version,
+            "db_status": db_status,
+            "workflow_status": workflow_status,
+            "summary_status": summary_status,
+            "current_node": summary.get("current_node"),
+            "run_id": summary.get("run_id"),
+            "runtime_present": bool(runtime),
+            "runtime_status": runtime.get("run_status"),
+            "runtime_task_active": has_active_task,
+            "job_present": bool(summary.get("run_id") and summary.get("run_id") in jobs),
+            "updated_at": summary.get("updated_at"),
+            "stale_candidate": bool(is_stale_candidate_status and not has_active_task),
+        })
+    return {"project_id": project_id, "items": diagnostics}
+
+
+def reconcile_project_runtime(project_id: str, *, dry_run: bool = True) -> dict:
+    diagnostics = diagnose_project_runtime(project_id)
+    actions = []
+    for item in diagnostics.get("items", []):
+        if not item.get("stale_candidate"):
+            continue
+        version = item["version"]
+        next_status = RUN_STATUS_FAILED
+        reason = (
+            "Marked stale because metadata indicates an active workflow, "
+            "but no active runtime task is present."
+        )
+        actions.append({
+            "project_id": project_id,
+            "version": version,
+            "from_status": item.get("summary_status"),
+            "to_status": next_status,
+            "reason": reason,
+            "applied": not dry_run,
+        })
+        if dry_run:
+            continue
+        metadata_db.upsert_version(project_id, version, _load_persisted_requirement_text(project_id, version), next_status)
+        metadata_db.upsert_workflow_run(
+            project_id,
+            version,
+            run_id=item.get("run_id"),
+            status=next_status,
+            current_node=item.get("current_node"),
+            waiting_reason=reason,
+            finished_at=_now_iso(),
+        )
+        thread_id = _thread_id(project_id, version)
+        runtime_registry.pop(thread_id, None)
+        state_cache.pop(thread_id, None)
+    return {"project_id": project_id, "dry_run": dry_run, "actions": actions}
+
+
+def reconcile_all_project_runtimes(*, dry_run: bool = True) -> dict:
+    results = []
+    for project in metadata_db.list_projects():
+        project_id = project.get("id")
+        if project_id:
+            results.append(reconcile_project_runtime(project_id, dry_run=dry_run))
+    return {"dry_run": dry_run, "projects": results}
+
 
 
 def _delete_checkpoint_state(project_id: str, version: str):
@@ -4149,6 +4299,7 @@ def delete_version(project_id: str, version: str) -> bool:
     )
     runtime_registry.pop(thread_id, None)
     runtime_tasks.pop(thread_id, None)
+    state_cache.pop(thread_id, None)
     _delete_checkpoint_state(project_id, version)
     metadata_db.delete_version(project_id, version)
     shutil.rmtree(project_version_dir, ignore_errors=True)
@@ -4166,8 +4317,14 @@ def get_artifacts_tree(project_id: str, version: str):
 
 def get_version_logs(project_id: str, version: str) -> list:
     persisted_logs = get_run_log(project_id, version, BASE_DIR)
-    current_state = get_workflow_state(project_id, version)
-    run_id = (current_state or {}).get("run_id")
+    workflow_run = metadata_db.get_workflow_run(project_id, version) or {}
+    runtime = runtime_registry.get(_thread_id(project_id, version), {}) or {}
+    current_state = {
+        "run_status": runtime.get("run_status") or workflow_run.get("status"),
+        "current_node": runtime.get("current_node") or workflow_run.get("current_node"),
+        "pending_interrupt": runtime.get("pending_interrupt") or workflow_run.get("pending_interrupt"),
+    }
+    run_id = runtime.get("job_id") or workflow_run.get("run_id")
     live_logs = jobs.get(run_id, {}).get("logs", []) if run_id else []
 
     combined_logs = list(persisted_logs)

@@ -1095,22 +1095,28 @@ class MetadataDB:
     def list_projects(self, runtime_states: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
             rows = conn.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall()
+            version_rows = conn.execute(
+                "SELECT project_id, version_id, run_status FROM versions"
+            ).fetchall()
+            expert_rows = conn.execute(
+                """
+                SELECT project_id, COUNT(*) AS enabled_count
+                FROM project_experts
+                WHERE enabled = 1
+                GROUP BY project_id
+                """
+            ).fetchall()
+
+        statuses_by_project: Dict[str, Dict[str, str]] = {}
+        for version_row in version_rows:
+            statuses_by_project.setdefault(version_row["project_id"], {})[version_row["version_id"]] = version_row["run_status"]
+        enabled_counts = {row["project_id"]: int(row["enabled_count"] or 0) for row in expert_rows}
         
         projects = []
         for row in rows:
             proj = dict(row)
-            # Get project status info
             project_id = proj['id']
-            
-            # Count versions with all status breakdown
-            with self._get_connection() as conn:
-                version_rows = conn.execute(
-                    "SELECT version_id, run_status FROM versions WHERE project_id = ?",
-                    (project_id,)
-                ).fetchall()
-            
-            # Build version status map, overlay with runtime states
-            version_statuses = {v['version_id']: v['run_status'] for v in version_rows}
+            version_statuses = dict(statuses_by_project.get(project_id, {}))
             if runtime_states:
                 for version_id, rt_state in runtime_states.items():
                     if rt_state.get('project_id') == project_id:
@@ -1140,7 +1146,7 @@ class MetadataDB:
             is_active = status_counts['running'] > 0 or status_counts['waiting_human'] > 0
             
             proj['total_versions'] = total_versions
-            proj['enabled_experts_count'] = len(self.list_enabled_expert_ids(project_id))
+            proj['enabled_experts_count'] = enabled_counts.get(project_id, 0)
             proj['running_versions'] = status_counts['running']
             proj['success_versions'] = status_counts['success']
             proj['failed_versions'] = status_counts['failed']
@@ -3578,9 +3584,19 @@ class MetadataDB:
             ).fetchone()[0]
             rows = conn.execute(
                 """
-                SELECT * FROM versions
-                WHERE project_id = ?
-                ORDER BY created_at DESC
+                SELECT
+                    v.*,
+                    wr.run_id AS workflow_run_id,
+                    wr.status AS workflow_status,
+                    wr.current_node AS workflow_current_node,
+                    wr.waiting_reason AS workflow_waiting_reason,
+                    wr.pending_interrupt_json AS workflow_pending_interrupt_json,
+                    wr.updated_at AS workflow_updated_at
+                FROM versions v
+                LEFT JOIN workflow_runs wr
+                    ON wr.project_id = v.project_id AND wr.version_id = v.version_id
+                WHERE v.project_id = ?
+                ORDER BY v.created_at DESC
                 LIMIT ? OFFSET ?
                 """,
                 (project_id, page_size, offset),

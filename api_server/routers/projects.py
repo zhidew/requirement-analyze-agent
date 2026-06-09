@@ -2,6 +2,7 @@ import asyncio
 import os
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
+from starlette.concurrency import run_in_threadpool
 from typing import List
 from models.project import (
     ArtifactAcceptRequest,
@@ -148,7 +149,7 @@ async def upload_baseline_files(
 
 @router.get("", response_model=List[ProjectResponse])
 async def get_projects():
-    projects = orch.list_projects()
+    projects = await run_in_threadpool(orch.list_projects)
     return projects
 
 @router.post("", response_model=ProjectResponse)
@@ -159,8 +160,18 @@ async def create_project(req: ProjectCreateRequest):
 
 @router.get("/{project_id}/assets-summary")
 async def get_project_assets_summary(project_id: str):
-    summary = orch.get_project_assets_summary(project_id)
+    summary = await run_in_threadpool(orch.get_project_assets_summary, project_id)
     return summary
+
+
+@router.get("/{project_id}/runtime-diagnostics")
+async def get_project_runtime_diagnostics(project_id: str):
+    return await run_in_threadpool(orch.diagnose_project_runtime, project_id)
+
+
+@router.post("/{project_id}/runtime-reconcile")
+async def reconcile_project_runtime(project_id: str, dry_run: bool = True):
+    return await run_in_threadpool(lambda: orch.reconcile_project_runtime(project_id, dry_run=dry_run))
 
 @router.delete("/{project_id}")
 async def delete_project(project_id: str):
@@ -171,7 +182,7 @@ async def delete_project(project_id: str):
 
 @router.get("/{project_id}/versions", response_model=VersionListResponse)
 async def get_project_versions(project_id: str, page: int = 1, page_size: int = 10):
-    versions_data = orch.list_versions(project_id, page, page_size)
+    versions_data = await run_in_threadpool(orch.list_versions, project_id, page, page_size)
     return versions_data
 
 @router.delete("/{project_id}/versions/{version}")
@@ -244,18 +255,18 @@ async def schedule_design_orchestrator(project_id: str, version: str, req: Sched
 
 @router.get("/{project_id}/versions/{version}/artifacts")
 async def get_artifacts(project_id: str, version: str):
-    tree = orch.get_artifacts_tree(project_id, version)
+    tree = await run_in_threadpool(orch.get_artifacts_tree, project_id, version)
     return tree
 
 
 @router.get("/{project_id}/requirements", response_model=List[RequirementItemResponse])
 async def list_requirement_items(project_id: str, type: str | None = None):
-    return metadata_db.list_requirement_items(project_id, type.upper() if type else None)
+    return await run_in_threadpool(metadata_db.list_requirement_items, project_id, type.upper() if type else None)
 
 
 @router.get("/{project_id}/requirements/{item_type}/{item_id}", response_model=RequirementItemResponse)
 async def get_requirement_item(project_id: str, item_type: str, item_id: str):
-    item = metadata_db.get_requirement_item(project_id, item_type.upper(), item_id)
+    item = await run_in_threadpool(metadata_db.get_requirement_item, project_id, item_type.upper(), item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Requirement item not found.")
     return item
@@ -263,13 +274,13 @@ async def get_requirement_item(project_id: str, item_type: str, item_id: str):
 
 @router.get("/{project_id}/requirements/{item_type}/{item_id}/versions", response_model=List[RequirementVersionResponse])
 async def list_requirement_item_versions(project_id: str, item_type: str, item_id: str):
-    versions = metadata_db.list_requirement_versions(project_id, item_type.upper(), item_id)
+    versions = await run_in_threadpool(metadata_db.list_requirement_versions, project_id, item_type.upper(), item_id)
     return [requirement_identity_service.version_response(item) for item in versions]
 
 
 @router.get("/{project_id}/requirements/{item_type}/{item_id}/versions/{version_id}", response_model=RequirementVersionResponse)
 async def get_requirement_item_version(project_id: str, item_type: str, item_id: str, version_id: str):
-    version = metadata_db.get_requirement_version(project_id, item_type.upper(), item_id, version_id)
+    version = await run_in_threadpool(metadata_db.get_requirement_version, project_id, item_type.upper(), item_id, version_id)
     if not version:
         raise HTTPException(status_code=404, detail="Version does not belong to the requested requirement item.")
     return requirement_identity_service.version_response(version)
@@ -277,7 +288,8 @@ async def get_requirement_item_version(project_id: str, item_type: str, item_id:
 
 @router.get("/{project_id}/requirements/{item_type}/{item_id}/trace", response_model=RequirementTraceResponse)
 async def get_requirement_item_trace(project_id: str, item_type: str, item_id: str):
-    return {"items": metadata_db.list_requirement_trace_edges(project_id, item_type.upper(), item_id)}
+    items = await run_in_threadpool(metadata_db.list_requirement_trace_edges, project_id, item_type.upper(), item_id)
+    return {"items": items}
 
 
 @router.get("/{project_id}/temp/versions")
@@ -622,7 +634,7 @@ async def apply_revision_patch(project_id: str, version: str, patch_id: str):
 
 @router.get("/{project_id}/versions/{version}/state")
 async def get_workflow_state(project_id: str, version: str):
-    state = orch.get_workflow_state(project_id, version)
+    state = await run_in_threadpool(orch.get_workflow_state, project_id, version)
     if not state:
         # Fallback to a very minimal state instead of 404
         return {
@@ -646,17 +658,18 @@ async def resume_workflow(project_id: str, version: str, req: ResumeRequest):
 
 @router.get("/{project_id}/versions/{version}/interactions/current", response_model=InteractionDetailResponse | None)
 async def get_current_interaction(project_id: str, version: str):
-    return orch.get_current_interaction(project_id, version)
+    return await run_in_threadpool(orch.get_current_interaction, project_id, version)
 
 
 @router.get("/{project_id}/versions/{version}/interactions", response_model=InteractionListResponse)
 async def list_interactions(project_id: str, version: str):
-    return {"items": orch.list_interactions(project_id, version)}
+    items = await run_in_threadpool(orch.list_interactions, project_id, version)
+    return {"items": items}
 
 
 @router.get("/{project_id}/versions/{version}/interactions/{interaction_id}", response_model=InteractionDetailResponse)
 async def get_interaction_detail(project_id: str, version: str, interaction_id: str):
-    record = orch.get_interaction_detail(project_id, version, interaction_id)
+    record = await run_in_threadpool(orch.get_interaction_detail, project_id, version, interaction_id)
     if not record:
         raise HTTPException(status_code=404, detail="Interaction not found.")
     return record
@@ -678,7 +691,7 @@ async def submit_interaction_response(
 
 @router.get("/{project_id}/versions/{version}/clarified-requirements", response_model=ClarifiedRequirementsResponse)
 async def get_clarified_requirements(project_id: str, version: str):
-    return orch.get_clarified_requirements(project_id, version)
+    return await run_in_threadpool(orch.get_clarified_requirements, project_id, version)
 
 @router.post("/{project_id}/versions/{version}/retry-node")
 async def retry_workflow_node(project_id: str, version: str, req: NodeRetryRequest):
@@ -721,5 +734,5 @@ async def cancel_workflow(project_id: str, version: str, req: CancelRequest):
 
 @router.get("/{project_id}/versions/{version}/logs")
 async def get_version_logs(project_id: str, version: str):
-    logs = orch.get_version_logs(project_id, version)
+    logs = await run_in_threadpool(orch.get_version_logs, project_id, version)
     return {"logs": logs}

@@ -130,6 +130,10 @@ class VersionMetadata(BaseModel):
     project_id: str
     requirement: str
     run_status: str
+    current_node: Optional[str] = None
+    run_id: Optional[str] = None
+    can_resume: bool = False
+    waiting_reason: Optional[str] = None
     requirement_type: Optional[str] = None
     requirement_id: Optional[str] = None
     requirement_id_source: Optional[str] = None

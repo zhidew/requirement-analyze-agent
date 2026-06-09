@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { api, BASELINE_UPLOAD_ACCEPT, formatApiErrorMessage, type ClarifiedRequirementsPayload, type DesignArtifact, type InteractionRecord } from '../api';
+import { api, BASELINE_UPLOAD_ACCEPT, formatApiErrorMessage, isApiRequestCanceled, type ClarifiedRequirementsPayload, type DesignArtifact, type InteractionRecord } from '../api';
 import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, BarChart3, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square, Clock3 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -121,6 +121,11 @@ interface VersionMetadata {
   pipeline_sequence?: number | null;
   temp_archived?: boolean;
   run_status?: RunStatus;
+  current_node?: string | null;
+  run_id?: string | null;
+  can_resume?: boolean;
+  waiting_reason?: string | null;
+  updated_at?: string;
 }
 
 interface RequirementTraceEdge {
@@ -664,6 +669,7 @@ export function ProjectDetail() {
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventSourceRunKeyRef = useRef<string | null>(null);
+  const requestControllersRef = useRef<Set<AbortController>>(new Set());
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const seenLlmChunkKeysRef = useRef<Set<string>>(new Set());
   const latestFetchedStateAtRef = useRef<number>(0);
@@ -805,6 +811,22 @@ export function ProjectDetail() {
     return nodeId;
   };
 
+  const createRequestSignal = () => {
+    const controller = new AbortController();
+    requestControllersRef.current.add(controller);
+    return {
+      signal: controller.signal,
+      release: () => requestControllersRef.current.delete(controller),
+    };
+  };
+
+  const abortPendingRequests = () => {
+    requestControllersRef.current.forEach((controller) => controller.abort());
+    requestControllersRef.current.clear();
+  };
+
+  useEffect(() => () => abortPendingRequests(), []);
+
   const loadProjectModels = async () => {
     if (!id) return;
     try {
@@ -842,30 +864,38 @@ export function ProjectDetail() {
   const fetchLogs = async (versionOverride?: string) => {
     const versionToFetch = versionOverride ?? selectedVersionRef.current;
     if (!id || !versionToFetch) return;
+    const request = createRequestSignal();
     try {
-      const { logs } = await api.getVersionLogs(id, versionToFetch);
+      const { logs } = await api.getVersionLogs(id, versionToFetch, request.signal);
       if (selectedVersionRef.current !== versionToFetch) return;
       setVersionLogs(logs || []);
     } catch (err) {
+      if (isApiRequestCanceled(err)) return;
       console.error('Failed to fetch version logs:', err);
+    } finally {
+      request.release();
     }
   };
 
   const fetchInteractionContext = async (versionOverride?: string) => {
     const versionToFetch = versionOverride ?? selectedVersionRef.current;
     if (!id || !versionToFetch) return;
+    const request = createRequestSignal();
     try {
       const [current, listed, clarified] = await Promise.all([
-        api.getCurrentInteraction(id, versionToFetch),
-        api.listInteractions(id, versionToFetch),
-        api.getClarifiedRequirements(id, versionToFetch),
+        api.getCurrentInteraction(id, versionToFetch, request.signal),
+        api.listInteractions(id, versionToFetch, request.signal),
+        api.getClarifiedRequirements(id, versionToFetch, request.signal),
       ]);
       if (selectedVersionRef.current !== versionToFetch) return;
       setCurrentInteraction(current);
       setInteractionHistory(Array.isArray(listed?.items) ? listed.items : []);
       setClarifiedRequirements(clarified);
     } catch (err) {
+      if (isApiRequestCanceled(err)) return;
       console.error('Failed to fetch interaction context:', err);
+    } finally {
+      request.release();
     }
   };
 
@@ -1266,8 +1296,9 @@ export function ProjectDetail() {
   const fetchState = async (versionOverride?: string) => {
     const versionToFetch = versionOverride ?? selectedVersionRef.current;
     if (!id || !versionToFetch) return;
+    const request = createRequestSignal();
     try {
-      const state = await api.getProjectState(id, versionToFetch) as WorkflowState;
+      const state = await api.getProjectState(id, versionToFetch, request.signal) as WorkflowState;
       syncVersionState(versionToFetch, {
         run_status: state.run_status,
         current_node: state.current_node,
@@ -1278,6 +1309,7 @@ export function ProjectDetail() {
         temp_archived: state.temp_archived,
       });
       if (selectedVersionRef.current !== versionToFetch) return;
+      const isInitialStateLoad = latestFetchedStateAtRef.current === 0;
       setWorkflowState(state);
       latestFetchedStateAtRef.current = Date.parse(state.updated_at || '') || 0;
       if (state.run_id && ACTIVE_REFRESH_RUN_STATUSES.has(state.run_status)) {
@@ -1305,14 +1337,22 @@ export function ProjectDetail() {
       });
       setStreamStatus(state.run_status === 'running' ? 'connected' : 'idle');
 
-      if (state.run_status !== 'queued') {
+      const shouldRefreshArtifacts = isInitialStateLoad || state.run_status === 'success' || state.run_status === 'failed';
+      const shouldRefreshInteractionContext = state.run_status === 'waiting_human' || state.run_status === 'success' || state.run_status === 'failed';
+
+      if (state.run_status !== 'queued' && shouldRefreshArtifacts) {
         void loadArtifacts(versionToFetch);
       }
       void fetchLogs(versionToFetch);
-      void fetchInteractionContext(versionToFetch);
-      void loadRequirementTrace(state);
+      if (shouldRefreshInteractionContext) {
+        void fetchInteractionContext(versionToFetch);
+      }
+      if (isInitialStateLoad || state.run_status === 'success') {
+        void loadRequirementTrace(state);
+      }
 
     } catch (err: any) {
+      if (isApiRequestCanceled(err)) return;
       if (selectedVersionRef.current !== versionToFetch) return;
       if (err.response?.status === 404) {
         setWorkflowState(null);
@@ -1322,6 +1362,8 @@ export function ProjectDetail() {
         setClarifiedRequirements(null);
       }
       setStreamStatus('error');
+    } finally {
+      request.release();
     }
   };
 
@@ -1330,11 +1372,15 @@ export function ProjectDetail() {
       setRequirementTrace([]);
       return;
     }
+    const request = createRequestSignal();
     try {
-      const res = await api.getRequirementTrace(id, state.requirement_type, state.requirement_id);
+      const res = await api.getRequirementTrace(id, state.requirement_type, state.requirement_id, request.signal);
       setRequirementTrace(Array.isArray(res.items) ? res.items : []);
-    } catch {
+    } catch (err) {
+      if (isApiRequestCanceled(err)) return;
       setRequirementTrace([]);
+    } finally {
+      request.release();
     }
   };
 
@@ -1345,8 +1391,9 @@ export function ProjectDetail() {
   ) => {
     if (!id) return;
     setIsVersionsLoading(true);
+    const request = createRequestSignal();
     try {
-      const res = await api.getProjectVersions(id, targetPage, targetPageSize);
+      const res = await api.getProjectVersions(id, targetPage, targetPageSize, request.signal);
       const versionIds = res.versions.map((v: any) => v.version_id);
       setVersions(versionIds);
       setVersionMetadataMap(Object.fromEntries(
@@ -1357,6 +1404,22 @@ export function ProjectDetail() {
           pipeline_sequence: v.pipeline_sequence,
           temp_archived: Boolean(v.temp_archived),
           run_status: v.run_status,
+          current_node: v.current_node,
+          run_id: v.run_id,
+          can_resume: Boolean(v.can_resume),
+          waiting_reason: v.waiting_reason,
+          updated_at: v.updated_at,
+        }]),
+      ));
+      setVersionStateMap(Object.fromEntries(
+        res.versions.map((v: any) => [v.version_id, {
+          run_status: v.run_status,
+          current_node: v.current_node,
+          updated_at: v.updated_at,
+          requirement_type: v.requirement_type,
+          requirement_id: v.requirement_id,
+          pipeline_sequence: v.pipeline_sequence,
+          temp_archived: Boolean(v.temp_archived),
         }]),
       ));
       setTotalVersions(res.total);
@@ -1372,38 +1435,14 @@ export function ProjectDetail() {
         handleSelectVersion(versionToSelect);
       }
 
-      if (versionIds.length > 0) {
-        void (async () => {
-          const settled = await Promise.allSettled(
-            versionIds.map(async (version: string) => {
-              const state = await api.getProjectState(id, version) as WorkflowState;
-              return [version, {
-                run_status: state.run_status,
-                current_node: state.current_node,
-                updated_at: state.updated_at,
-                requirement_type: state.requirement_type,
-                requirement_id: state.requirement_id,
-                pipeline_sequence: state.pipeline_sequence,
-                temp_archived: state.temp_archived,
-              }] as const;
-            }),
-          );
-
-          const nextStateMap: Record<string, VersionStateSummary> = {};
-          settled.forEach((result) => {
-            if (result.status === 'fulfilled') {
-              const [version, summary] = result.value;
-              nextStateMap[version] = summary;
-            }
-          });
-          setVersionStateMap(nextStateMap);
-        })();
-      } else {
+      if (versionIds.length === 0) {
         setVersionStateMap({});
       }
-    } catch {
+    } catch (err) {
+      if (isApiRequestCanceled(err)) return;
       setUiError(t('common.loadError'));
     } finally {
+      request.release();
       setIsVersionsLoading(false);
     }
   };
@@ -1612,6 +1651,7 @@ export function ProjectDetail() {
   };
 
   const handleSelectVersion = (version: string) => {
+    abortPendingRequests();
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     eventSourceRunKeyRef.current = null;
@@ -1726,19 +1766,22 @@ export function ProjectDetail() {
   const loadArtifacts = async (version: string) => {
     if (!id) return;
     setIsArtifactsLoading(true);
+    const request = createRequestSignal();
     try {
       const [data, governance] = await Promise.all([
-        api.getProjectArtifacts(id, version),
-        api.listDesignArtifacts(id, version),
+        api.getProjectArtifacts(id, version, request.signal),
+        api.listDesignArtifacts(id, version, undefined, request.signal),
       ]);
       if (selectedVersionRef.current !== version) return;
       setArtifacts(data);
       setDesignArtifacts(governance.items || []);
-    } catch {
+    } catch (err) {
+      if (isApiRequestCanceled(err)) return;
       if (selectedVersionRef.current !== version) return;
       setArtifacts({});
       setDesignArtifacts([]);
     } finally {
+      request.release();
       if (selectedVersionRef.current !== version) return;
       setIsArtifactsLoading(false);
     }

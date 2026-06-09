@@ -7,6 +7,10 @@ export const apiClient = axios.create({
   baseURL: API_BASE_URL,
 });
 
+export function isApiRequestCanceled(error: unknown): boolean {
+  return axios.isCancel(error) || (axios.isAxiosError(error) && error.code === 'ERR_CANCELED');
+}
+
 interface ActiveRunSummary {
   project_id?: string;
   version?: string;
@@ -327,8 +331,8 @@ export const api = {
     apiClient.delete(`/projects/${projectId}`).then(res => res.data),
   getProjectAssetsSummary: (projectId: string) =>
     apiClient.get(`/projects/${projectId}/assets-summary`).then(res => res.data),
-  getProjectVersions: (projectId: string, page: number = 1, pageSize: number = 10) => 
-    apiClient.get(`/projects/${projectId}/versions`, { params: { page, page_size: pageSize } }).then(res => res.data),
+  getProjectVersions: (projectId: string, page: number = 1, pageSize: number = 10, signal?: AbortSignal) => 
+    apiClient.get(`/projects/${projectId}/versions`, { params: { page, page_size: pageSize }, signal }).then(res => res.data),
   deleteProjectVersion: (projectId: string, version: string) =>
     apiClient.delete(`/projects/${projectId}/versions/${version}`).then(res => res.data),
   prepareVersion: (projectId: string, version: string, requirementText: string, options?: RequirementRunOptions) =>
@@ -360,8 +364,8 @@ export const api = {
     apiClient.get(`/projects/${projectId}/requirements`, { params: { type } }).then(res => res.data),
   getRequirementVersion: (projectId: string, itemType: string, itemId: string, version: string) =>
     apiClient.get(`/projects/${projectId}/requirements/${itemType}/${itemId}/versions/${version}`).then(res => res.data),
-  getRequirementTrace: (projectId: string, itemType: string, itemId: string) =>
-    apiClient.get(`/projects/${projectId}/requirements/${itemType}/${itemId}/trace`).then(res => res.data),
+  getRequirementTrace: (projectId: string, itemType: string, itemId: string, signal?: AbortSignal) =>
+    apiClient.get(`/projects/${projectId}/requirements/${itemType}/${itemId}/trace`, { signal }).then(res => res.data),
   listTempVersions: (projectId: string) =>
     apiClient.get(`/projects/${projectId}/temp/versions`).then(res => res.data),
 
@@ -372,10 +376,10 @@ export const api = {
       headers: { 'Content-Type': 'multipart/form-data' }
     }).then(res => res.data);
   },
-  getProjectArtifacts: (projectId: string, version: string) => 
-    apiClient.get(`/projects/${projectId}/versions/${version}/artifacts`).then(res => res.data),
-  listDesignArtifacts: (projectId: string, version: string, expertId?: string) =>
-    apiClient.get(`/projects/${projectId}/versions/${version}/design-artifacts`, { params: { expert_id: expertId } }).then(res => res.data as { items: DesignArtifact[] }),
+  getProjectArtifacts: (projectId: string, version: string, signal?: AbortSignal) => 
+    apiClient.get(`/projects/${projectId}/versions/${version}/artifacts`, { signal }).then(res => res.data),
+  listDesignArtifacts: (projectId: string, version: string, expertId?: string, signal?: AbortSignal) =>
+    apiClient.get(`/projects/${projectId}/versions/${version}/design-artifacts`, { params: { expert_id: expertId }, signal }).then(res => res.data as { items: DesignArtifact[] }),
   acceptDesignArtifact: (projectId: string, version: string, artifactId: string, payload?: {
     reviewer_note?: string;
     accepted_by?: string;
@@ -434,14 +438,14 @@ export const api = {
   }) => apiClient.post(`/projects/${projectId}/versions/${version}/conflicts/${conflictId}/decisions`, payload).then(res => res.data as DecisionLog),
   updateImpactRecordStatus: (projectId: string, version: string, impactId: string, status: string) =>
     apiClient.post(`/projects/${projectId}/versions/${version}/impact-records/${impactId}/status`, { status }).then(res => res.data as ImpactRecord),
-  getProjectState: (projectId: string, version: string) => 
-    apiClient.get(`/projects/${projectId}/versions/${version}/state`).then(res => res.data),
-  getCurrentInteraction: (projectId: string, version: string) =>
-    apiClient.get(`/projects/${projectId}/versions/${version}/interactions/current`).then(res => res.data as InteractionRecord | null),
-  listInteractions: (projectId: string, version: string) =>
-    apiClient.get(`/projects/${projectId}/versions/${version}/interactions`).then(res => res.data as { items: InteractionRecord[] }),
-  getClarifiedRequirements: (projectId: string, version: string) =>
-    apiClient.get(`/projects/${projectId}/versions/${version}/clarified-requirements`).then(res => res.data as ClarifiedRequirementsPayload),
+  getProjectState: (projectId: string, version: string, signal?: AbortSignal) => 
+    apiClient.get(`/projects/${projectId}/versions/${version}/state`, { signal }).then(res => res.data),
+  getCurrentInteraction: (projectId: string, version: string, signal?: AbortSignal) =>
+    apiClient.get(`/projects/${projectId}/versions/${version}/interactions/current`, { signal }).then(res => res.data as InteractionRecord | null),
+  listInteractions: (projectId: string, version: string, signal?: AbortSignal) =>
+    apiClient.get(`/projects/${projectId}/versions/${version}/interactions`, { signal }).then(res => res.data as { items: InteractionRecord[] }),
+  getClarifiedRequirements: (projectId: string, version: string, signal?: AbortSignal) =>
+    apiClient.get(`/projects/${projectId}/versions/${version}/clarified-requirements`, { signal }).then(res => res.data as ClarifiedRequirementsPayload),
   submitInteractionResponse: (
     projectId: string,
     version: string,
@@ -475,8 +479,8 @@ export const api = {
     apiClient.post(`/projects/${projectId}/versions/${version}/continue`, { model }).then(res => res.data),
   cancelWorkflow: (projectId: string, version: string, reason?: string) =>
     apiClient.post(`/projects/${projectId}/versions/${version}/cancel`, { reason }).then(res => res.data),
-  getVersionLogs: (projectId: string, version: string) => 
-    apiClient.get(`/projects/${projectId}/versions/${version}/logs`).then(res => res.data),
+  getVersionLogs: (projectId: string, version: string, signal?: AbortSignal) => 
+    apiClient.get(`/projects/${projectId}/versions/${version}/logs`, { signal }).then(res => res.data),
   getJobStatusSseUrl: (jobId: string) => `${API_BASE_URL}/jobs/${jobId}/status`,
   getRepositoryConfigs: (projectId: string) =>
     apiClient.get(`/projects/${projectId}/config/repositories`).then(res => res.data),
